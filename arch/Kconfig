@@ -40,7 +40,8 @@ config OPROFILE_NMI_TIMER
 config KPROBES
 	bool "Kprobes"
 	depends on MODULES
-	depends on HAVE_KPROBES
+	depends on HAVE_KPROBES && HUAWEI_KERNEL_DEBUG
+	default y if HUAWEI_KERNEL_DEBUG
 	select KALLSYMS
 	help
 	  Kprobes allows you to trap at almost any kernel address and
@@ -163,7 +164,8 @@ config ARCH_USE_BUILTIN_BSWAP
 
 config KRETPROBES
 	def_bool y
-	depends on KPROBES && HAVE_KRETPROBES
+	depends on KPROBES && HAVE_KRETPROBES && HUAWEI_KERNEL_DEBUG
+	default y if HUAWEI_KERNEL_DEBUG
 
 config USER_RETURN_NOTIFIER
 	bool
@@ -768,6 +770,12 @@ config HAVE_ARCH_VMAP_STACK
 	  - If the stack overflows into a guard page, something reasonable
 	    should happen.  The definition of "reasonable" is flexible, but
 	    instantly rebooting without logging anything would be unfriendly.
+
+config FASTBOOT_DUMP
+	default n
+	  bool "fastboot_dump"
+	help
+	  only open on eng mode.
 
 config VMAP_STACK
 	default y

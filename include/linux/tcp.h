@@ -289,6 +289,12 @@ struct tcp_sock {
 	u32	sacked_out;	/* SACK'd packets			*/
 	u32	fackets_out;	/* FACK'd packets			*/
 
+#ifdef CONFIG_TCP_NODELAY
+	u16	nodelay_size;	/* packet size by delayed */
+	u8	nodelay;	/* Auto tcp no delay is disabled */
+	u8	pingpong;	/* send msg count without response */
+#endif
+
 	/* from STCP, retrans queue hinting */
 	struct sk_buff* lost_skb_hint;
 	struct sk_buff *retransmit_skb_hint;
@@ -333,6 +339,9 @@ struct tcp_sock {
 		u32	rtt;
 		u32	seq;
 		u32	time;
+#ifdef CONFIG_TCP_AUTOTUNING
+		u32	min_rtt;
+#endif
 	} rcv_rtt_est;
 
 /* Receiver queue space */
@@ -340,7 +349,19 @@ struct tcp_sock {
 		int	space;
 		u32	seq;
 		u32	time;
+#ifdef CONFIG_TCP_AUTOTUNING
+		u32	segs;
+#endif
 	} rcvq_space;
+
+#ifdef CONFIG_TCP_AUTOTUNING
+	struct {
+		u32 loss;
+		u32 bw;
+		u32 rtt_cnt;
+		u32 rcv_wnd;
+       } rcv_rate;
+#endif
 
 /* TCP-specific MTU probe information. */
 	struct {
@@ -366,6 +387,10 @@ struct tcp_sock {
 	 */
 	struct request_sock *fastopen_rsk;
 	u32	*saved_syn;
+#ifdef CONFIG_CHR_NETLINK_MODULE
+	u8 first_data_flag;
+	u8 data_net_flag;
+#endif
 };
 
 enum tsq_flags {

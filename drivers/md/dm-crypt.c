@@ -32,6 +32,13 @@
 
 #include <linux/device-mapper.h>
 
+#ifdef CONFIG_HUAWEI_IO_TRACING
+#include <iotrace/iotrace.h>
+DEFINE_TRACE(block_crypt_dec_pending);
+DEFINE_TRACE(block_kcryptd_crypt);
+DEFINE_TRACE(block_crypt_map);
+#endif
+
 #define DM_MSG_PREFIX "crypt"
 
 /*
@@ -1080,6 +1087,9 @@ static void crypt_dec_pending(struct dm_crypt_io *io)
 	if (io->ctx.req)
 		crypt_free_req(cc, io->ctx.req, base_bio);
 
+#ifdef CONFIG_HUAWEI_IO_TRACING
+	trace_block_crypt_dec_pending(base_bio);
+#endif
 	base_bio->bi_error = error;
 	bio_endio(base_bio);
 }
@@ -1394,6 +1404,9 @@ static void kcryptd_crypt(struct work_struct *work)
 {
 	struct dm_crypt_io *io = container_of(work, struct dm_crypt_io, work);
 
+#ifdef CONFIG_HUAWEI_IO_TRACING
+	trace_block_kcryptd_crypt(io->base_bio);
+#endif
 	if (bio_data_dir(io->base_bio) == READ)
 		kcryptd_crypt_read_convert(io);
 	else
@@ -1942,6 +1955,9 @@ static int crypt_map(struct dm_target *ti, struct bio *bio)
 	crypt_io_init(io, cc, bio, dm_target_offset(ti, bio->bi_iter.bi_sector));
 	io->ctx.req = (struct skcipher_request *)(io + 1);
 
+#ifdef CONFIG_HUAWEI_IO_TRACING
+	trace_block_crypt_map(bio, cc->start + io->sector);
+#endif
 	if (bio_data_dir(io->base_bio) == READ) {
 		if (kcryptd_io_read(io, GFP_NOWAIT))
 			kcryptd_queue_read(io);

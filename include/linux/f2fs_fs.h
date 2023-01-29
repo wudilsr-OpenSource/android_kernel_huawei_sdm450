@@ -46,6 +46,7 @@
 
 /* This flag is used by node and meta inodes, and by recovery */
 #define GFP_F2FS_ZERO		(GFP_NOFS | __GFP_ZERO)
+#define GFP_F2FS_HIGH_ZERO	(GFP_NOFS | __GFP_ZERO | __GFP_HIGHMEM)
 
 /*
  * For further optimization on multi-head logs, on-disk layout supports maximum
@@ -110,13 +111,14 @@ struct f2fs_super_block {
 	__u8 encrypt_pw_salt[16];	/* Salt used for string2key algorithm */
 	struct f2fs_device devs[MAX_DEVICES];	/* device list */
 	__le32 qf_ino[F2FS_MAX_QUOTAS];	/* quota inode numbers */
-	__u8 reserved[315];		/* valid reserved region */
+	__u8 reserved[311];		/* valid reserved region */
+	__le32 crc;			/* checksum of superblock */
 } __packed;
 
 /*
  * For checkpoint
  */
-#define CP_NOCRC_RECOVERY_FLAG	0x00000200
+#define CP_CRC_RECOVERY_FLAG_XOR	0x80000000
 #define CP_TRIMMED_FLAG		0x00000100
 #define CP_NAT_BITS_FLAG	0x00000080
 #define CP_CRC_RECOVERY_FLAG	0x00000040
@@ -126,6 +128,10 @@ struct f2fs_super_block {
 #define CP_COMPACT_SUM_FLAG	0x00000004
 #define CP_ORPHAN_PRESENT_FLAG	0x00000002
 #define CP_UMOUNT_FLAG		0x00000001
+#ifdef CONFIG_F2FS_JOURNAL_APPEND
+#define CP_APPEND_SIT_FLAG	0x00000400
+#define CP_APPEND_NAT_FLAG	0x00000800
+#endif
 
 #define F2FS_CP_PACKS		2	/* # of checkpoint packs */
 
@@ -252,10 +258,8 @@ struct f2fs_inode {
 			__le16 i_inline_xattr_size;	/* inline xattr size, unit: 4 bytes */
 			__le32 i_projid;	/* project id */
 			__le32 i_inode_checksum;/* inode meta checksum */
-			__le64 i_crtime;	/* creation time */
-			__le32 i_crtime_nsec;	/* creation time in nano scale */
 			__le32 i_extra_end[0];	/* for attribute size calculation */
-		} __packed;
+		};
 		__le32 i_addr[DEF_ADDRS_PER_INODE];	/* Pointers to data blocks */
 	};
 	__le32 i_nid[DEF_NIDS_PER_INODE];	/* direct(2), indirect(2),
@@ -403,6 +407,13 @@ struct summary_footer {
 				sizeof(struct sit_journal_entry))
 #define SIT_JOURNAL_RESERVED	((SUM_JOURNAL_SIZE - 2) %\
 				sizeof(struct sit_journal_entry))
+
+#ifdef CONFIG_F2FS_JOURNAL_APPEND
+#define NAT_APPEND_JOURNAL_ENTRIES	(F2FS_BLKSIZE /\
+					sizeof(struct nat_journal_entry))
+#define SIT_APPEND_JOURNAL_ENTRIES	(F2FS_BLKSIZE /\
+					sizeof(struct sit_journal_entry))
+#endif
 
 /* Reserved area should make size of f2fs_extra_info equals to
  * that of nat_journal and sit_journal.

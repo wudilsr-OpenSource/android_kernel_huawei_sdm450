@@ -43,6 +43,7 @@
 #include "kgsl_sync.h"
 #include "kgsl_compat.h"
 #include "kgsl_pool.h"
+#include <linux/syscalls.h>
 
 #undef MODULE_PARAM_PREFIX
 #define MODULE_PARAM_PREFIX "kgsl."
@@ -4450,11 +4451,16 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 				private->pid, addr, pgoff, len, (int) val);
 	} else {
 		val = _get_svm_area(private, entry, addr, len, flags);
-		if (IS_ERR_VALUE(val))
+		if (IS_ERR_VALUE(val)){
 			KGSL_DRV_ERR_RATELIMIT(device,
 				"_get_svm_area: pid %d mmap_base %lx addr %lx pgoff %lx len %ld failed error %d\n",
 				private->pid, current->mm->mmap_base, addr,
 				pgoff, len, (int) val);
+			if((strlen(private->comm) >= strlen("encent.mm")) && strstr(private->comm,"encent.mm")){
+				KGSL_DRV_ERR_RATELIMIT(device,"GPU out of virtual memory, just kill wechat process");
+				sys_kill(private->pid,SIGKILL);
+			}
+		}
 	}
 
 put:

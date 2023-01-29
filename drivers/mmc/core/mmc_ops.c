@@ -22,6 +22,12 @@
 #include "host.h"
 #include "mmc_ops.h"
 
+#ifdef CONFIG_HUAWEI_SDCARD_DSM
+#include <linux/mmc/dsm_sdcard.h>
+#endif
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+#include <linux/mmc/dsm_emmc.h>
+#endif
 #define MMC_OPS_TIMEOUT_MS	(10 * 60 * 1000) /* 10 minute timeout */
 
 static const u8 tuning_blk_pattern_4bit[] = {
@@ -90,6 +96,7 @@ int mmc_send_status(struct mmc_card *card, u32 *status)
 
 static int _mmc_select_card(struct mmc_host *host, struct mmc_card *card)
 {
+	int err;
 	struct mmc_command cmd = {0};
 
 	BUG_ON(!host);
@@ -104,7 +111,11 @@ static int _mmc_select_card(struct mmc_host *host, struct mmc_card *card)
 		cmd.flags = MMC_RSP_NONE | MMC_CMD_AC;
 	}
 
-	return mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
+	err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
+#ifdef CONFIG_HUAWEI_SDCARD_DSM
+	sdcard_cmd7_resp_err_dsm(host, &cmd, err);
+#endif
+	return err;
 }
 
 int mmc_select_card(struct mmc_card *card)
@@ -229,8 +240,19 @@ int mmc_all_send_cid(struct mmc_host *host, u32 *cid)
 	cmd.flags = MMC_RSP_R2 | MMC_CMD_BCR;
 
 	err = mmc_wait_for_cmd(host, &cmd, MMC_CMD_RETRIES);
+#ifdef CONFIG_HUAWEI_SDCARD_DSM
+	sdcard_cmd2_resp_err_dsm(host, &cmd, err);
+#endif
 	if (err)
+	{
+#ifdef CONFIG_HUAWEI_QCOM_MMC
+		if(host && !strcmp(mmc_hostname(host),"mmc1"))
+		{
+			pr_err("%s: send cmd2 fail, err=%d\n", mmc_hostname(host), err);
+		}
+#endif
 		return err;
+	}
 
 	memcpy(cid, cmd.resp, sizeof(u32) * 4);
 
@@ -319,6 +341,14 @@ mmc_send_cxd_data(struct mmc_card *card, struct mmc_host *host,
 
 	mmc_wait_for_req(host, &mrq);
 
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+	if(cmd.error || data.error)
+		if(host->index == device_index){
+			DSM_EMMC_LOG(card, DSM_EMMC_SEND_CXD_ERR,
+				"opcode:%d failed, cmd.error:%d, data.error:%d\n",
+				opcode, cmd.error, data.error);
+		}
+#endif
 	if (cmd.error)
 		return cmd.error;
 	if (data.error)
@@ -409,6 +439,13 @@ int mmc_get_ext_csd(struct mmc_card *card, u8 **new_ext_csd)
 	return err;
 }
 EXPORT_SYMBOL_GPL(mmc_get_ext_csd);
+
+int mmc_send_ext_csd(struct mmc_card *card, u8 *ext_csd)
+{
+	return mmc_send_cxd_data(card, card->host, MMC_SEND_EXT_CSD,
+			ext_csd, 512);
+}
+EXPORT_SYMBOL_GPL(mmc_send_ext_csd);
 
 int mmc_spi_read_ocr(struct mmc_host *host, int highcap, u32 *ocrp)
 {

@@ -18,7 +18,6 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/consumer.h>
 #include <linux/extcon.h>
-#include <linux/alarmtimer.h>
 #include "storm-watch.h"
 
 enum print_reason {
@@ -35,6 +34,7 @@ enum print_reason {
 #define DCP_VOTER			"DCP_VOTER"
 #define QC_VOTER			"QC_VOTER"
 #define PL_USBIN_USBIN_VOTER		"PL_USBIN_USBIN_VOTER"
+#define USER_PSY_VOTER			"USER_PSY_VOTER"
 #define USB_PSY_VOTER			"USB_PSY_VOTER"
 #define PL_TAPER_WORK_RUNNING_VOTER	"PL_TAPER_WORK_RUNNING_VOTER"
 #define PL_QNOVO_VOTER			"PL_QNOVO_VOTER"
@@ -67,24 +67,16 @@ enum print_reason {
 #define PL_FCC_LOW_VOTER		"PL_FCC_LOW_VOTER"
 #define WBC_VOTER			"WBC_VOTER"
 #define HW_LIMIT_VOTER			"HW_LIMIT_VOTER"
+#define BATTCHG_USER_EN_VOTER		"BATTCHG_USER_EN_VOTER"
 #define FORCE_RECHARGE_VOTER		"FORCE_RECHARGE_VOTER"
 #define AICL_THRESHOLD_VOTER		"AICL_THRESHOLD_VOTER"
-#define MOISTURE_VOTER			"MOISTURE_VOTER"
+#define PM_CHARGE_LOCK_VOTE		"PM_CHARGE_LOCK_VOTE"
+#define USBOV_DBC_VOTER			"USBOV_DBC_VOTER"
 
 #define BOOST_BACK_STORM_COUNT	3
 #define WEAK_CHG_STORM_COUNT	8
 
 #define VBAT_TO_VRAW_ADC(v)		div_u64((u64)v * 1000000UL, 194637UL)
-
-#define SDP_100_MA			100000
-#define SDP_CURRENT_UA			500000
-#define CDP_CURRENT_UA			1500000
-#define DCP_CURRENT_UA			1500000
-#define HVDCP_CURRENT_UA		3000000
-#define TYPEC_DEFAULT_CURRENT_UA	900000
-#define TYPEC_MEDIUM_CURRENT_UA		1500000
-#define TYPEC_HIGH_CURRENT_UA		3000000
-#define ADC_CHG_TERM_MASK	32767
 
 enum smb_mode {
 	PARALLEL_MASTER = 0,
@@ -101,13 +93,13 @@ enum sink_src_mode {
 enum {
 	BOOST_BACK_WA			= BIT(0),
 	WEAK_ADAPTER_WA			= BIT(1),
-	MOISTURE_PROTECTION_WA		= BIT(2),
+	USBIN_OV_WA			= BIT(3),
 };
 
 enum {
 	RERUN_AICL			= BIT(0),
 	RESTART_AICL			= BIT(1),
-};
+ };
 
 enum smb_irq_index {
 	/* CHGR */
@@ -195,7 +187,7 @@ enum float_options {
 enum chg_term_config_src {
 	ITERM_SRC_UNSPECIFIED,
 	ITERM_SRC_ADC,
-	ITERM_SRC_ANALOG
+	ITERM_SRC_ANALOG,
 };
 
 struct smb_irq_info {
@@ -300,7 +292,8 @@ struct smb_charger {
 	int			otg_delay_ms;
 	int			*weak_chg_icl_ua;
 	struct qpnp_vadc_chip	*vadc_dev;
-	bool			pd_not_supported;
+	bool		is_support_charge_lock;
+	bool		charge_lock_mark;
 
 	/* locks */
 	struct mutex		lock;
@@ -314,6 +307,7 @@ struct smb_charger {
 	struct power_supply		*bms_psy;
 	struct power_supply		*usb_main_psy;
 	struct power_supply		*usb_port_psy;
+	struct power_supply		*extra_batt_psy;
 	enum power_supply_type		real_charger_type;
 
 	/* notifiers */
@@ -337,21 +331,19 @@ struct smb_charger {
 	struct votable		*chg_disable_votable;
 	struct votable		*pl_enable_votable_indirect;
 	struct votable		*usb_irq_enable_votable;
+	struct votable		*pm_charge_votable;
 
 	/* work */
 	struct work_struct	bms_update_work;
 	struct work_struct	pl_update_work;
 	struct work_struct	jeita_update_work;
-	struct work_struct	moisture_protection_work;
 	struct delayed_work	ps_change_timeout_work;
 	struct delayed_work	clear_hdc_work;
 	struct delayed_work	icl_change_work;
 	struct delayed_work	pl_enable_work;
 	struct delayed_work	uusb_otg_work;
 	struct delayed_work	bb_removal_work;
-
-	/* alarm */
-	struct alarm		moisture_protection_alarm;
+	struct delayed_work	usbov_dbc_work;
 
 	/* pd */
 	int			voltage_min_uv;
@@ -392,6 +384,7 @@ struct smb_charger {
 	int			hw_max_icl_ua;
 	int			auto_recharge_soc;
 	bool			jeita_configured;
+	bool               safety_timer_en;
 	enum sink_src_mode	sink_src_mode;
 	bool			hw_die_temp_mitigation;
 	bool			hw_connector_mitigation;
@@ -401,12 +394,11 @@ struct smb_charger {
 	int			aicl_cont_threshold_mv;
 	int			default_aicl_cont_threshold_mv;
 	bool			aicl_max_reached;
-	bool			moisture_present;
-	bool			moisture_protection_enabled;
 
 	/* workaround flag */
 	u32			wa_flags;
 	int			boost_current_ua;
+	bool			dbc_usbov;
 
 	/* extcon for VBUS / ID notification to USB for uUSB */
 	struct extcon_dev	*extcon;
@@ -426,6 +418,12 @@ struct smb_charger {
 	u32			headroom_mode;
 	bool			flash_init_done;
 	bool			flash_active;
+
+	const char			*bms_psy_name;
+
+	/* input charge current*/
+	int			current_cdp_ua;
+	int			current_dcp_ua;
 };
 
 int smblib_read(struct smb_charger *chg, u16 addr, u8 *val);
@@ -463,6 +461,7 @@ int smblib_vbus_regulator_is_enabled(struct regulator_dev *rdev);
 int smblib_vconn_regulator_enable(struct regulator_dev *rdev);
 int smblib_vconn_regulator_disable(struct regulator_dev *rdev);
 int smblib_vconn_regulator_is_enabled(struct regulator_dev *rdev);
+int smb5_set_usb_current_and_flag(struct smb_charger *chg,int icl_ua);
 
 irqreturn_t default_irq_handler(int irq, void *data);
 irqreturn_t chg_state_change_irq_handler(int irq, void *data);
@@ -479,6 +478,7 @@ irqreturn_t high_duty_cycle_irq_handler(int irq, void *data);
 irqreturn_t switcher_power_ok_irq_handler(int irq, void *data);
 irqreturn_t wdog_bark_irq_handler(int irq, void *data);
 irqreturn_t typec_or_rid_detection_change_irq_handler(int irq, void *data);
+irqreturn_t usbin_ov_irq_handler(int irq, void *data);
 
 int smblib_get_prop_input_suspend(struct smb_charger *chg,
 				union power_supply_propval *val);
@@ -503,8 +503,6 @@ int smblib_get_prop_input_current_limited(struct smb_charger *chg,
 int smblib_get_prop_batt_voltage_now(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_batt_current_now(struct smb_charger *chg,
-				union power_supply_propval *val);
-int smblib_get_prop_batt_iterm(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_batt_temp(struct smb_charger *chg,
 				union power_supply_propval *val);
@@ -587,8 +585,9 @@ int smblib_stat_sw_override_cfg(struct smb_charger *chg, bool override);
 int smblib_configure_wdog(struct smb_charger *chg, bool enable);
 int smblib_force_vbus_voltage(struct smb_charger *chg, u8 val);
 int smblib_configure_hvdcp_apsd(struct smb_charger *chg, bool enable);
-int smblib_icl_override(struct smb_charger *chg, bool override);
 
 int smblib_init(struct smb_charger *chg);
 int smblib_deinit(struct smb_charger *chg);
+int smbchg_safety_timer_enable(struct smb_charger *chg, bool enable);
+int get_prop_batt_voltage_max_design(struct smb_charger *chg);
 #endif /* __SMB5_CHARGER_H */

@@ -1,14 +1,13 @@
 /*
  * fscrypt_supp.h
  *
- * Do not include this file directly. Use fscrypt.h instead!
+ * This is included by filesystems configured with encryption support.
  */
-#ifndef _LINUX_FSCRYPT_H
-#error "Incorrect include of linux/fscrypt_supp.h!"
-#endif
 
 #ifndef _LINUX_FSCRYPT_SUPP_H
 #define _LINUX_FSCRYPT_SUPP_H
+
+#include <linux/fscrypt_common.h>
 
 /* crypto.c */
 extern struct kmem_cache *fscrypt_info_cachep;
@@ -17,8 +16,16 @@ extern void fscrypt_release_ctx(struct fscrypt_ctx *);
 extern struct page *fscrypt_encrypt_page(const struct inode *, struct page *,
 						unsigned int, unsigned int,
 						u64, gfp_t);
+extern struct page *fscrypt_encrypt_dio_page(struct inode *, struct page *,
+						unsigned int, unsigned int,
+		                                u64, gfp_t);
 extern int fscrypt_decrypt_page(const struct inode *, struct page *, unsigned int,
 				unsigned int, u64);
+extern int fscrypt_decrypt_dio_page(struct inode *, struct page *,
+					unsigned int, unsigned int, u64);
+extern void fscrypt_decrypt_bio_pages(struct fscrypt_ctx *, struct bio *);
+extern void fscrypt_decrypt_dio_bio_pages(struct fscrypt_ctx *, struct bio *,
+					  work_func_t func);
 extern void fscrypt_restore_control_page(struct page *);
 
 extern const struct dentry_operations fscrypt_d_ops;
@@ -42,12 +49,14 @@ extern int fscrypt_has_permitted_context(struct inode *, struct inode *);
 extern int fscrypt_inherit_context(struct inode *, struct inode *,
 					void *, bool);
 /* keyinfo.c */
+extern int fscrypt_set_gcm_key(struct crypto_aead *, u8 *);
+extern int fscrypt_derive_gcm_key(struct crypto_aead *,
+				u8 *, u8 *, u8 *, int);
+extern struct key *fscrypt_request_key(u8 *, const u8 *, int);
 extern int fscrypt_get_encryption_info(struct inode *);
 extern void fscrypt_put_encryption_info(struct inode *, struct fscrypt_info *);
 extern int fs_using_hardware_encryption(struct inode *inode);
-extern char *fscrypt_get_ice_encryption_key(const struct inode *inode);
-extern char *fscrypt_get_ice_encryption_salt(const struct inode *inode);
-extern int fscrypt_is_aes_xts_cipher(const struct inode *inode);
+
 /* fname.c */
 extern int fscrypt_setup_filename(struct inode *, const struct qstr *,
 				int lookup, struct fscrypt_name *);
@@ -145,15 +154,5 @@ extern void fscrypt_decrypt_bio_pages(struct fscrypt_ctx *, struct bio *);
 extern void fscrypt_pullback_bio_page(struct page **, bool);
 extern int fscrypt_zeroout_range(const struct inode *, pgoff_t, sector_t,
 				 unsigned int);
-
-/* hooks.c */
-extern int fscrypt_file_open(struct inode *inode, struct file *filp);
-extern int __fscrypt_prepare_link(struct inode *inode, struct inode *dir);
-extern int __fscrypt_prepare_rename(struct inode *old_dir,
-				    struct dentry *old_dentry,
-				    struct inode *new_dir,
-				    struct dentry *new_dentry,
-				    unsigned int flags);
-extern int __fscrypt_prepare_lookup(struct inode *dir, struct dentry *dentry);
 
 #endif	/* _LINUX_FSCRYPT_SUPP_H */

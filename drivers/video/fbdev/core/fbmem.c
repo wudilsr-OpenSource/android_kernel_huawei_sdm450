@@ -35,7 +35,17 @@
 
 #include <asm/fb.h>
 
+#ifdef CONFIG_LCDKIT_DRIVER
+extern int tp_reset_enable;
+extern int lcdkit_msg_level ;
+extern u32 lcdkit_get_panel_off_reset_high(void);
 
+#ifndef LCDKIT_INFO
+#define LCDKIT_INFO(msg, ...)    \
+    do { if (lcdkit_msg_level > 6)  \
+        printk(KERN_INFO "[lcdkit]%s: "msg, __func__, ## __VA_ARGS__); } while (0)
+#endif
+#endif
     /*
      *  Frame buffer device initialization and setup routines
      */
@@ -1052,6 +1062,74 @@ fb_set_var(struct fb_info *info, struct fb_var_screeninfo *var)
 }
 EXPORT_SYMBOL(fb_set_var);
 
+#ifdef CONFIG_LCDKIT_DRIVER
+int fb_blank(struct fb_info *info, int blank)
+{
+	struct fb_event event;
+	int ret = -EINVAL, early_ret;
+
+	unsigned long timeout ;
+	LCDKIT_INFO("Enter %s, blank_mode = [%d].\n", __func__, blank);
+
+	if (blank > FB_BLANK_POWERDOWN)
+		blank = FB_BLANK_POWERDOWN;
+
+	event.info = info;
+	event.data = &blank;
+
+	early_ret = fb_notifier_call_chain(FB_EARLY_EVENT_BLANK, &event);
+
+	if (lcdkit_get_panel_off_reset_high())
+	{
+		if((blank == FB_BLANK_UNBLANK) || (blank == FB_BLANK_POWERDOWN))
+		{
+			fb_notifier_call_chain(FB_EVENT_BLANK, &event);
+			LCDKIT_INFO(":when power on wake tp pre lcd.\n");
+		}
+	}
+	else
+	{
+		if(blank == FB_BLANK_UNBLANK)
+		{
+			fb_notifier_call_chain(FB_EVENT_BLANK, &event);
+			LCDKIT_INFO(":when power on wake tp pre lcd.\n");
+		}
+	}
+
+	timeout = jiffies ;
+
+	if (info->fbops->fb_blank)
+		ret = info->fbops->fb_blank(blank, info);
+
+    LCDKIT_INFO(": fb blank time = %u\n", jiffies_to_msecs(jiffies-timeout));
+
+	if (!ret)
+	{
+        if (lcdkit_get_panel_off_reset_high())
+        {
+            if ((blank != FB_BLANK_UNBLANK) && (blank != FB_BLANK_POWERDOWN))
+                fb_notifier_call_chain(FB_EVENT_BLANK, &event);
+        }
+        else
+        {
+            if (blank != FB_BLANK_UNBLANK)
+                fb_notifier_call_chain(FB_EVENT_BLANK, &event);
+        }
+	}
+	else {
+		/*
+		 * if fb_blank is failed then revert effects of
+		 * the early blank event.
+		 */
+		if (!early_ret)
+			fb_notifier_call_chain(FB_R_EARLY_EVENT_BLANK, &event);
+	}
+
+    LCDKIT_INFO("Exit %s, blank_mode = [%d].\n",__func__,blank);
+
+	return ret;
+}
+#else
 int
 fb_blank(struct fb_info *info, int blank)
 {	
@@ -1082,6 +1160,7 @@ fb_blank(struct fb_info *info, int blank)
 
  	return ret;
 }
+#endif
 EXPORT_SYMBOL(fb_blank);
 
 static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
@@ -1219,8 +1298,6 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 		console_unlock();
 		break;
 	default:
-		if (!lock_fb_info(info))
-			return -ENODEV;
 		fb = info->fbops;
 		if (fb->fb_ioctl_v2)
 			ret = fb->fb_ioctl_v2(info, cmd, arg, file);
@@ -1228,7 +1305,6 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 			ret = fb->fb_ioctl(info, cmd, arg);
 		else
 			ret = -ENOTTY;
-		unlock_fb_info(info);
 	}
 	return ret;
 }
@@ -1471,6 +1547,7 @@ __releases(&info->lock)
 		goto out;
 	}
 	file->private_data = info;
+	info->file = file;
 	if (info->fbops->fb_open) {
 		res = info->fbops->fb_open(info,1);
 		if (res)
@@ -1495,6 +1572,7 @@ __releases(&info->lock)
 	struct fb_info * const info = file->private_data;
 
 	mutex_lock(&info->lock);
+	info->file = file;
 	if (info->fbops->fb_release)
 		info->fbops->fb_release(info,1);
 	module_put(info->fbops->owner);

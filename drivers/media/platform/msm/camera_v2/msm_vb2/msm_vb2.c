@@ -399,7 +399,7 @@ static int msm_vb2_put_buf(struct vb2_v4l2_buffer *vb, int session_id,
 
 static int msm_vb2_buf_done(struct vb2_v4l2_buffer *vb, int session_id,
 				unsigned int stream_id, uint32_t sequence,
-				struct timeval *ts, uint32_t buf_type)
+				struct timeval *ts, uint32_t buf_type, bool is_empty_buffer)
 {
 	unsigned long flags, rl_flags;
 	struct msm_vb2_buffer *msm_vb2;
@@ -445,8 +445,16 @@ static int msm_vb2_buf_done(struct vb2_v4l2_buffer *vb, int session_id,
 			vb2_v4l2_buf->vb2_buf.timestamp =
 				((u64)ts->tv_sec * 1000000 +
 				ts->tv_usec) * 1000;
-			vb2_buffer_done(&vb2_v4l2_buf->vb2_buf,
-				VB2_BUF_STATE_DONE);
+
+			if(is_empty_buffer)
+			{
+				vb2_buffer_done(&vb2_v4l2_buf->vb2_buf, VB2_BUF_STATE_ERROR);
+				pr_err(" VB2_BUF_STATE_ERROR! return empty buffer. ses_id=%d, str_id=%d\n", session_id, stream_id);
+
+			}else{
+				vb2_buffer_done(&vb2_v4l2_buf->vb2_buf, VB2_BUF_STATE_DONE);
+			}
+
 			msm_vb2->in_freeq = 0;
 			rc = 0;
 		} else

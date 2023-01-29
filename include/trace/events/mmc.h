@@ -176,6 +176,37 @@ TRACE_EVENT(mmc_request_done,
 		  __entry->hold_retune, __entry->retune_period)
 );
 
+
+#ifdef CONFIG_HUAWEI_IO_TRACING
+/**/
+DECLARE_EVENT_CLASS(mmc_blk_cmdq_rw_class,
+	TP_PROTO(unsigned int cmd, unsigned int tag, unsigned int addr, unsigned int size),
+	TP_ARGS(cmd, tag, addr, size),
+	TP_STRUCT__entry(
+		__field(unsigned int, cmd)
+		__field(unsigned int, tag)
+		__field(unsigned int, addr)
+		__field(unsigned int, size)
+	),
+	TP_fast_assign(
+		__entry->cmd = cmd;
+		__entry->tag = tag;
+		__entry->addr = addr;
+		__entry->size = size;
+	),
+	TP_printk("cmd=%u,tag=%u, addr=0x%08x,size=0x%08x",
+		  __entry->cmd, __entry->tag, __entry->addr, __entry->size)
+);
+
+DEFINE_EVENT(mmc_blk_cmdq_rw_class, mmc_blk_cmdq_rw_start,
+	TP_PROTO(unsigned int cmd, unsigned int tag, unsigned int addr, unsigned int size),
+	TP_ARGS(cmd, tag, addr, size));
+
+DEFINE_EVENT(mmc_blk_cmdq_rw_class, mmc_blk_cmdq_rw_end,
+	TP_PROTO(unsigned int cmd, unsigned int tag, unsigned int addr, unsigned int size),
+	TP_ARGS(cmd, tag, addr, size));
+#endif
+
 TRACE_EVENT(mmc_cmd_rw_start,
 	TP_PROTO(unsigned int cmd, unsigned int arg, unsigned int flags),
 	TP_ARGS(cmd, arg, flags),
@@ -289,6 +320,15 @@ DECLARE_EVENT_CLASS(mmc_pm_template,
 		__entry->err
 	)
 );
+
+#ifdef CONFIG_HUAWEI_IO_TRACING
+DECLARE_TRACE(mmc_blk_rw_start,
+    TP_PROTO(unsigned int cmd, unsigned int addr, struct mmc_data *data),
+    TP_ARGS(cmd, addr, data));
+DECLARE_TRACE(mmc_blk_rw_end,
+    TP_PROTO(unsigned int cmd, unsigned int addr, struct mmc_data *data),
+    TP_ARGS(cmd, addr, data));
+#endif
 
 DEFINE_EVENT(mmc_pm_template, mmc_runtime_suspend,
 	     TP_PROTO(const char *dev_name, int err, s64 usecs),

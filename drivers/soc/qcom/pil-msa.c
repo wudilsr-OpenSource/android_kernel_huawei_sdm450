@@ -773,6 +773,9 @@ mss_reset:
 	ret = pil_mss_reset(pil);
 	if (ret) {
 		dev_err(pil->dev, "MBA boot failed(rc:%d)\n", ret);
+#ifndef CONFIG_FINAL_RELEASE
+        BUG_ON("MBA boot failed.\n");
+#endif
 		goto err_mss_reset;
 	}
 

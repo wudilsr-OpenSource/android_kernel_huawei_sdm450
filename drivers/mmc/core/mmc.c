@@ -16,6 +16,10 @@
 #include <linux/stat.h>
 #include <linux/pm_runtime.h>
 
+#ifdef CONFIG_HUAWEI_QCOM_MMC
+#include <linux/bootdevice.h>
+#endif
+
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/mmc.h>
@@ -27,6 +31,10 @@
 #include "bus.h"
 #include "mmc_ops.h"
 #include "sd_ops.h"
+
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+#include <linux/mmc/dsm_emmc.h>
+#endif
 
 #define DEFAULT_CMD6_TIMEOUT_MS	500
 
@@ -694,6 +702,9 @@ static int mmc_decode_ext_csd(struct mmc_card *card, u8 *ext_csd)
 		card->ext_csd.barrier_support = 0;
 		card->ext_csd.cache_flush_policy = 0;
 	}
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+	emmc_get_life_time(card, ext_csd);
+#endif
 
 	/* eMMC v5 or later */
 	if (card->ext_csd.rev >= 7) {
@@ -709,6 +720,16 @@ static int mmc_decode_ext_csd(struct mmc_card *card, u8 *ext_csd)
 		card->ext_csd.device_life_time_est_typ_b =
 			ext_csd[EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_B];
 	}
+
+#ifdef CONFIG_HUAWEI_QCOM_MMC
+	if (get_bootdevice_type() == BOOT_DEVICE_EMMC) {
+		set_bootdevice_size(card->ext_csd.sectors);
+		set_bootdevice_pre_eol_info(card->ext_csd.pre_eol_info);
+		set_bootdevice_life_time_est_typ_a(card->ext_csd.device_life_time_est_typ_a);
+		set_bootdevice_life_time_est_typ_b(card->ext_csd.device_life_time_est_typ_b);
+	}
+#endif
+
 out:
 	return err;
 }
@@ -750,8 +771,10 @@ static int mmc_read_ext_csd(struct mmc_card *card)
 		return err;
 	}
 
+	card->cached_ext_csd = ext_csd;
+
 	err = mmc_decode_ext_csd(card, ext_csd);
-	kfree(ext_csd);
+
 	return err;
 }
 
@@ -2021,6 +2044,14 @@ reinit:
 		}
 	}
 
+#ifdef CONFIG_HUAWEI_QCOM_MMC
+	if (get_bootdevice_type() == BOOT_DEVICE_EMMC) {
+		set_bootdevice_cid(cid);
+		set_bootdevice_product_name(card->cid.prod_name,
+							sizeof(card->cid.prod_name));
+		set_bootdevice_manfid(card->cid.manfid);
+	}
+#endif
 	/*
 	 * handling only for cards supporting DSR and hosts requesting
 	 * DSR configuration
@@ -2041,6 +2072,9 @@ reinit:
 	}
 
 	if (!oldcard) {
+		/* Initialise cached_ext_csd */
+		card->cached_ext_csd = NULL;
+
 		/* Read extended CSD. */
 		err = mmc_read_ext_csd(card);
 		if (err) {
@@ -2348,6 +2382,9 @@ reinit:
 		}
 	}
 
+#ifdef CONFIG_HUAWEI_EMMC_DSM
+	emmc_life_time_dsm(card);
+#endif
 	return 0;
 
 free_card:
@@ -2450,7 +2487,7 @@ out_release:
 	return err;
 }
 
-static int mmc_can_poweroff_notify(const struct mmc_card *card)
+int mmc_can_poweroff_notify(const struct mmc_card *card)
 {
 	return card &&
 		mmc_card_mmc(card) &&
@@ -2783,7 +2820,7 @@ out:
 /*
  * Suspend callback
  */
-static int mmc_suspend(struct mmc_host *host)
+int mmc_suspend(struct mmc_host *host)
 {
 	int err;
 	ktime_t start = ktime_get();

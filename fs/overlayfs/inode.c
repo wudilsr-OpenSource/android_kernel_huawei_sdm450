@@ -12,6 +12,7 @@
 #include <linux/xattr.h>
 #include <linux/posix_acl.h>
 #include "overlayfs.h"
+#include <linux/security.h>
 
 static int ovl_copy_up_truncate(struct dentry *dentry)
 {
@@ -353,6 +354,36 @@ static const struct inode_operations ovl_symlink_inode_operations = {
 	.listxattr	= ovl_listxattr,
 	.update_time	= ovl_update_time,
 };
+
+void ovl_copyattr(struct inode *from, struct inode *to)
+{
+#ifdef CONFIG_SECURITY
+	void   *secctx;
+	size_t  ctxlen;
+	int     err = -1;
+
+	err = security_inode_getsecctx(from, &secctx, &ctxlen);
+	if (!err) {
+		/*
+		 * replace the fresh inode_security_struct because it should be
+		 * the same as the real underlying inode.
+		 */
+		err = security_inode_notifysecctx(to, secctx, ctxlen);
+		security_release_secctx(secctx, ctxlen);
+	}
+	if (err)
+		WARN(1, "cannot copy up security context err:%d\n", err);
+
+#endif
+	to->i_uid = from->i_uid;
+	to->i_gid = from->i_gid;
+	to->i_mode = from->i_mode;
+	to->i_atime = from->i_atime;
+	to->i_mtime = from->i_mtime;
+	to->i_ctime = from->i_ctime;
+	//copy the size attribute of lower indoe to merge layer
+	i_size_write(to, i_size_read(from));
+}
 
 static void ovl_fill_inode(struct inode *inode, umode_t mode)
 {

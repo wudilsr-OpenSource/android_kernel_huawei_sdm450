@@ -23,6 +23,10 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+extern void get_uefi_time(unsigned long long ticks_from_power);
+#endif
+
 struct boot_stats {
 	uint32_t bootloader_start;
 	uint32_t bootloader_end;
@@ -98,6 +102,9 @@ int boot_stats_init(void)
 
 	print_boot_stats();
 
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+	get_uefi_time(readl_relaxed(mpm_counter_base) * 1000 / mpm_counter_freq);
+#endif
 	iounmap(boot_stats);
 	iounmap(mpm_counter_base);
 

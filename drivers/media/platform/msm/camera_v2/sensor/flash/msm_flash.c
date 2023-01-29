@@ -27,6 +27,7 @@ DEFINE_MSM_MUTEX(msm_flash_mutex);
 
 static struct v4l2_file_operations msm_flash_v4l2_subdev_fops;
 static struct led_trigger *torch_trigger;
+static struct led_trigger *switch_trigger;
 
 static const struct of_device_id msm_flash_dt_match[] = {
 	{.compatible = "qcom,camera-flash", .data = NULL},
@@ -54,7 +55,7 @@ static struct msm_camera_i2c_fn_t msm_sensor_cci_func_tbl = {
 	.i2c_util = msm_sensor_cci_i2c_util,
 	.i2c_poll =  msm_camera_cci_i2c_poll,
 };
-
+static enum msm_flash_lock_status msm_flash_status = MSM_FLASH_STATUS_UNLOCK;
 static void msm_torch_brightness_set(struct led_classdev *led_cdev,
 				enum led_brightness value)
 {
@@ -62,8 +63,29 @@ static void msm_torch_brightness_set(struct led_classdev *led_cdev,
 		pr_err("No torch trigger found, can't set brightness\n");
 		return;
 	}
-
-	led_trigger_event(torch_trigger, value);
+	if (MSM_CAMERA_LED_TORCH_POWER_NORMAL == (enum msm_falsh_power_statue)value) {
+		msm_flash_status = MSM_FLASH_STATUS_UNLOCK;
+		pr_info("power saving [main_flash] is normal\n");
+	}
+	else if (MSM_CAMERA_LED_TORCH_POWER_LOW == (enum msm_falsh_power_statue)value) {
+		msm_flash_status = MSM_FLASH_STATUS_LOCKED;
+		pr_info("power saving lock the [main_flash] \n");
+		led_trigger_event(switch_trigger, 0);
+		led_trigger_event(torch_trigger,0);
+		return;
+	}
+	else {
+		led_trigger_event(torch_trigger, value);
+		if(!switch_trigger){
+			pr_err("No switch_trigger found, ignore\n");
+		}else{
+			if(value>0){
+				led_trigger_event(switch_trigger, 1);
+			}else{
+				led_trigger_event(switch_trigger, 0);
+			}
+		}
+	}
 };
 
 static struct led_classdev msm_torch_led[MAX_LED_TRIGGERS] = {
@@ -95,6 +117,13 @@ static int32_t msm_torch_create_classdev(struct platform_device *pdev,
 	if (!fctrl) {
 		pr_err("Invalid fctrl\n");
 		return -EINVAL;
+	}
+
+	switch_trigger=fctrl->switch_trigger;
+	if(switch_trigger){
+		pr_err("switch_trigger get\n");
+	}else{
+		pr_err("switch_trigger is null\n");
 	}
 
 	for (i = 0; i < fctrl->torch_num_sources; i++) {
@@ -638,6 +667,9 @@ static int32_t msm_flash_low(
 	int32_t i = 0;
 
 	CDBG("Enter\n");
+	if (flash_ctrl->switch_trigger)
+		led_trigger_event(flash_ctrl->switch_trigger, 0);
+
 	/* Turn off flash triggers */
 	for (i = 0; i < flash_ctrl->flash_num_sources; i++)
 		if (flash_ctrl->flash_trigger[i])
@@ -675,6 +707,8 @@ static int32_t msm_flash_high(
 	int32_t max_current = 0;
 	int32_t i = 0;
 
+	if (flash_ctrl->switch_trigger)
+		led_trigger_event(flash_ctrl->switch_trigger, 0);
 	/* Turn off torch triggers */
 	for (i = 0; i < flash_ctrl->torch_num_sources; i++)
 		if (flash_ctrl->torch_trigger[i])
@@ -751,7 +785,12 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 	mutex_lock(flash_ctrl->flash_mutex);
 
 	CDBG("Enter %s type %d\n", __func__, flash_data->cfg_type);
-
+	if (((CFG_FLASH_LOW == flash_data->cfg_type) || (CFG_FLASH_HIGH == flash_data->cfg_type)) && (MSM_FLASH_STATUS_LOCKED == msm_flash_status))
+	{
+		pr_err("Low power! [main_flash] cannot work for flash type:%d \n",flash_data->cfg_type);
+		mutex_unlock(flash_ctrl->flash_mutex);
+		return 0;
+	}
 	switch (flash_data->cfg_type) {
 	case CFG_FLASH_INIT:
 		rc = msm_flash_init_prepare(flash_ctrl, flash_data);

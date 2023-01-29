@@ -44,6 +44,9 @@
 &pmi632_qg {
 	qcom,battery-data = <&mtp_batterydata>;
 };
+&pmi632_charger {
+	qcom,battery-data = <&mtp_batterydata>;
+};
 
 &pmi632_charger {
 	qcom,battery-data = <&mtp_batterydata>;
@@ -187,18 +190,6 @@
 				trip = <&pmi632_low_soc>;
 				cooling-device = <&CPU3 (THERMAL_MAX_LIMIT - 4)
 						(THERMAL_MAX_LIMIT - 4)>;
-			};
-			soc_map4 {
-				trip = <&pmi632_low_soc>;
-				cooling-device =
-					<&CPU4 THERMAL_MAX_LIMIT
-						THERMAL_MAX_LIMIT>;
-			};
-			soc_map5 {
-				trip = <&pmi632_low_soc>;
-				cooling-device =
-					<&CPU5 THERMAL_MAX_LIMIT
-						THERMAL_MAX_LIMIT>;
 			};
 			soc_map6 {
 				trip = <&pmi632_low_soc>;
@@ -510,10 +501,19 @@
 
 &pmi632_vadc {
 	pinctrl-names = "default";
-	pinctrl-0 = <&quiet_therm_default &smb_therm_default>;
+	pinctrl-0 = <&quiet_therm_default &smb_therm_default &pmi632_ctm_default &antenna_adc_default>;
 };
 
 &pmi632_gpios {
+	msm_uscp_temp {
+		/* Disable GPIO1 for h/w base mitigation */
+		pmi632_ctm_default: pmi632_ctm_default {
+			pins = "gpio1";
+			bias-high-impedance;	/* disable the GPIO */
+			bias-disable;		/* no-pull */
+		};
+	};
+
 	quiet_therm {
 		quiet_therm_default: quiet_therm_default {
 			pins = "gpio3";
@@ -527,25 +527,12 @@
 			bias-high-impedance;
 		};
 	};
-};
 
-&tlmm {
-	pmx_mdss {
-		mdss_dsi_active: mdss_dsi_active {
-			 mux {
-				 pins = "gpio61";
-			 };
-			 config {
-				 pins = "gpio61";
-			 };
-		 };
-		mdss_dsi_suspend: mdss_dsi_suspend {
-			  mux {
-				  pins = "gpio61";
-			  };
-			  config {
-				  pins = "gpio61";
-			  };
-		  };
+	antenna_adc {
+		antenna_adc_default: antenna_adc_default {
+			pins = "gpio4";
+			bias-high-impedance;/* disable the GPIO */
+			bias-disable;/* no-pull */
+		};
 	};
 };

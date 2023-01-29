@@ -19,6 +19,11 @@
 	qcom,msm-id = <338 0x0>;
 	qcom,msm-name = "SDM450";
 };
+/ {
+     huawei_boot_time {
+             compatible = "huawei,hw_boot_time_info";
+     };
+};
 
 &CPU4 {
 	efficiency = <1024>;
@@ -134,8 +139,8 @@
 };
 
 &pm8953_vadc {
-	pinctrl-0 = <&pa_therm1_default>;
-	/delete-node/ chan@13;
+/*	pinctrl-0 = <&pa_therm1_default>;*/
+/*	/delete-node/ chan@13;*/
 };
 
 &pm8953_mpps {

@@ -293,6 +293,16 @@ LIST_HEAD(vmap_area_list);
 static LLIST_HEAD(vmap_purge_list);
 static struct rb_root vmap_area_root = RB_ROOT;
 
+#ifdef CONFIG_DUMP_SYS_INFO
+#ifdef CONFIG_MMU
+unsigned long get_vmap_area_lock(void)
+{
+    return (unsigned long)&vmap_area_lock;
+}
+EXPORT_SYMBOL(get_vmap_area_lock);
+#endif
+#endif
+
 /* The vmap cache globals are protected by vmap_area_lock */
 static struct rb_node *free_vmap_cache;
 static unsigned long cached_hole_size;
@@ -657,8 +667,7 @@ static unsigned long lazy_max_pages(void)
 
 	log = fls(num_online_cpus());
 
-	return log * (1UL * CONFIG_VMAP_LAZY_PURGING_FACTOR *
-					1024 * 1024 / PAGE_SIZE);
+	return log * (32UL * 1024 * 1024 / PAGE_SIZE);
 }
 
 static atomic_t vmap_lazy_nr = ATOMIC_INIT(0);

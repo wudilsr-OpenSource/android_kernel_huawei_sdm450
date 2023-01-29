@@ -958,6 +958,13 @@ config NUMA_BALANCING
 
 	  This system will be inactive on UMA systems.
 
+config HUAWEI_BOOST_KILL
+	bool "boost kill"
+	default n
+	help
+	  if set, the process to be killed will be move to fast cpu and its nice
+	  value will also set to -20.
+
 config NUMA_BALANCING_DEFAULT_ENABLED
 	bool "Automatically enable NUMA aware memory/task placement"
 	default y
@@ -965,6 +972,13 @@ config NUMA_BALANCING_DEFAULT_ENABLED
 	help
 	  If set, automatic NUMA balancing will be enabled if running on a NUMA
 	  machine.
+
+config HUAWEI_BOOST_SIGKILL_FREE
+	bool "Boost memory release for sigkilled procs"
+	default n
+	help
+	  if set, the process to be killed will release its memory before all
+	  threads are dead.
 
 menuconfig CGROUPS
 	bool "Control Group support"
@@ -1014,6 +1028,12 @@ config CGROUP_PIDS
 	  since the PIDs limit only affects a process's ability to fork, not to
 	  attach to a cgroup.
 
+config CGROUP_IOLIMIT
+	bool "IO bandwidth limit cgroup subsystem"
+	help
+	  Provides a cgroup implementing for io bandwidth while a process
+	  in the cgroup read or write.
+
 config CGROUP_DEVICE
 	bool "Device controller for cgroups"
 	help
@@ -1057,6 +1077,11 @@ config CGROUP_SCHEDTUNE
 	     configured with a different boost value
 
 	  Say N if unsure.
+
+config HW_CGROUP_WORKINGSET
+	bool "workingset cgroup subsystem"
+	help
+	  Provides a cgroup implementing pagecache collector of workingset.
 
 config PAGE_COUNTER
        bool
@@ -2306,3 +2331,5 @@ config ASN1
 	  functions to call on what tags.
 
 source "kernel/Kconfig.locks"
+source "kernel/hwcfs/Kconfig"
+source "kernel/cpu_netlink/Kconfig"

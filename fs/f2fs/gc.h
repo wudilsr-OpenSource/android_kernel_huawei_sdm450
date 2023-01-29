@@ -8,6 +8,11 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+#include <linux/ratelimit.h>
+
+#define F2FS_GC_DSM_INTERVAL      (200 * HZ)
+#define F2FS_GC_DSM_BURST         2
+
 #define GC_THREAD_MIN_WB_PAGES		1	/*
 						 * a threshold to determine
 						 * whether IO subsystem is idle
@@ -20,25 +25,16 @@
 #define LIMIT_INVALID_BLOCK	40 /* percentage over total user space */
 #define LIMIT_FREE_BLOCK	40 /* percentage over invalid + free space */
 
-#define DEF_GC_FAILED_PINNED_FILES	2048
+#define DEF_GC_FAILED_PINNED_FILES	0xFFFFFFFF /* pin file protect max times */
 
 /* Search max. number of dirty segments to select a victim segment */
 #define DEF_MAX_VICTIM_SEARCH 4096 /* covers 8GB */
 
-struct f2fs_gc_kthread {
-	struct task_struct *f2fs_gc_task;
-	wait_queue_head_t gc_wait_queue_head;
-
-	/* for gc sleep time */
-	unsigned int urgent_sleep_time;
-	unsigned int min_sleep_time;
-	unsigned int max_sleep_time;
-	unsigned int no_gc_sleep_time;
-
-	/* for changing gc mode */
-	unsigned int gc_idle;
-	unsigned int gc_urgent;
-	unsigned int gc_wake;
+/* GC preferences */
+enum {
+	GC_LIFETIME = 0,
+	GC_BALANCE,
+	GC_PERF
 };
 
 struct gc_inode_list {

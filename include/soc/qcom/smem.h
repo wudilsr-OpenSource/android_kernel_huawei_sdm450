@@ -171,6 +171,23 @@ enum {
 	SMEM_IPA_FILTER_TABLE = SMEM_SMP2P_TZ_BASE + 8, /* 497 */
 	SMEM_NUM_ITEMS, /* 498 */
 };
+#define HWBOOT_LOG_INFO_START_BASE 0x08600B1C 
+typedef struct
+{
+    unsigned int lpddrID;                  /* DDR ID */
+    unsigned int reserve;                  /* reserve for byte Alignment. if not, it will lead to boot fail */
+    char rtc_offset_info[16];              /* rtc offset */
+    unsigned int pwrkpd_reset;
+    unsigned int update_flag[2];
+    unsigned int hwboot_ptr;               /* hwboot fail */
+    unsigned int fastboot_dump_control;
+#if 0
+       unsigned int pwrkpd_reset;
+    unsigned int sbl1_boottime;
+    unsigned int update_flag[2];           /* sd auto update flag */
+    unsigned int hwboot_ptr;
+#endif
+}smem_exten_huawei_paramater;
 
 #ifdef CONFIG_MSM_SMEM
 void *smem_alloc(unsigned int id, unsigned int size_in, unsigned int to_proc,

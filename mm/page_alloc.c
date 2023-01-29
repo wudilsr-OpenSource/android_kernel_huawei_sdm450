@@ -63,6 +63,7 @@
 #include <linux/sched/rt.h>
 #include <linux/page_owner.h>
 #include <linux/kthread.h>
+#include <linux/ion.h>
 #include <linux/memcontrol.h>
 #include <linux/show_mem_notifier.h>
 
@@ -70,6 +71,20 @@
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
 #include "internal.h"
+
+#ifdef CONFIG_HW_MEMORY_MONITOR
+#include <linux/delayacct.h>
+#include <chipset_common/mmonitor/mmonitor.h>
+#include <chipset_common/allocpages_delayacct/allocpages_delayacct.h>
+#endif
+
+#ifdef CONFIG_HISI_SLOW_PATH_COUNT
+#include "hisi/slowpath_count.h"
+#endif
+
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+#include <linux/unmovable_isolate.h>
+#endif
 
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
@@ -238,6 +253,10 @@ char * const migratetype_names[MIGRATE_TYPES] = {
 	"CMA",
 #endif
 	"HighAtomic",
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	"Unmovable_isolate1",
+	"Unmovable_isolate2",
+#endif
 #ifdef CONFIG_MEMORY_ISOLATION
 	"Isolate",
 #endif
@@ -1158,8 +1177,15 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 			/* MIGRATE_ISOLATE page should not go to pcplists */
 			VM_BUG_ON_PAGE(is_migrate_isolate(mt), page);
 			/* Pageblock could have been isolated meanwhile */
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+			if (unlikely(isolated_pageblocks) ||
+			   ((is_unmovable_isolate1(mt) || is_unmovable_isolate2(mt)) &&
+			     unmovable_isolate_disabled))
+				mt = get_pageblock_migratetype(page);
+#else
 			if (unlikely(isolated_pageblocks))
 				mt = get_pageblock_migratetype(page);
+#endif
 
 			if (bulkfree_pcp_prepare(page))
 				continue;
@@ -1198,6 +1224,9 @@ static void __meminit __init_single_page(struct page *page, unsigned long pfn,
 	/* The shift won't overflow because ZONE_NORMAL is below 4G. */
 	if (!is_highmem_idx(zone))
 		set_page_address(page, __va(pfn << PAGE_SHIFT));
+#endif
+#ifdef CONFIG_TASK_PROTECT_LRU
+	set_page_num(page, 0);
 #endif
 }
 
@@ -1844,6 +1873,10 @@ static int fallbacks[MIGRATE_TYPES][4] = {
 #ifdef CONFIG_CMA
 	[MIGRATE_CMA]         = { MIGRATE_TYPES }, /* Never used */
 #endif
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	[MIGRATE_UNMOVABLE_ISOLATE1] = { MIGRATE_TYPES }, /* Never used */
+	[MIGRATE_UNMOVABLE_ISOLATE2] = { MIGRATE_TYPES }, /* Never used */
+#endif
 #ifdef CONFIG_MEMORY_ISOLATION
 	[MIGRATE_ISOLATE]     = { MIGRATE_TYPES }, /* Never used */
 #endif
@@ -1971,7 +2004,6 @@ static bool can_steal_fallback(unsigned int order, int start_mt)
 
 	if (order >= pageblock_order / 2 ||
 		start_mt == MIGRATE_RECLAIMABLE ||
-		start_mt == MIGRATE_UNMOVABLE ||
 		page_group_by_mobility_disabled)
 		return true;
 
@@ -2068,12 +2100,22 @@ static void reserve_highatomic_pageblock(struct page *page, struct zone *zone,
 
 	/* Yoink! */
 	mt = get_pageblock_migratetype(page);
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	if (mt != MIGRATE_HIGHATOMIC &&
+			!is_migrate_isolate(mt) && !is_migrate_cma(mt) &&
+			!is_unmovable_isolate1(mt) && !is_unmovable_isolate2(mt)) {
+		zone->nr_reserved_highatomic += pageblock_nr_pages;
+		set_pageblock_migratetype(page, MIGRATE_HIGHATOMIC);
+		move_freepages_block(zone, page, MIGRATE_HIGHATOMIC);
+	}
+#else
 	if (mt != MIGRATE_HIGHATOMIC &&
 			!is_migrate_isolate(mt) && !is_migrate_cma(mt)) {
 		zone->nr_reserved_highatomic += pageblock_nr_pages;
 		set_pageblock_migratetype(page, MIGRATE_HIGHATOMIC);
 		move_freepages_block(zone, page, MIGRATE_HIGHATOMIC);
 	}
+#endif
 
 out_unlock:
 	spin_unlock_irqrestore(&zone->lock, flags);
@@ -2220,12 +2262,37 @@ __rmqueue_fallback(struct zone *zone, unsigned int order, int start_migratetype)
 static struct page *__rmqueue(struct zone *zone, unsigned int order,
 				int migratetype)
 {
-	struct page *page;
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	struct page *page = NULL;
+	int unmovable_isolate_enable;
 
+	unmovable_isolate_enable = unmovable_isolate_enabled(zone);
+	if (unmovable_isolate_enable && (migratetype == MIGRATE_UNMOVABLE)) {
+		if (valid_order_for_ui(order, MIGRATE_UNMOVABLE_ISOLATE1))
+			page = __rmqueue_smallest(zone, order, MIGRATE_UNMOVABLE_ISOLATE1);
+		else if (valid_order_for_ui(order, MIGRATE_UNMOVABLE_ISOLATE2))
+			page = __rmqueue_smallest(zone, order, MIGRATE_UNMOVABLE_ISOLATE2);
+	}
+#else
+	struct page *page;
+#endif
+
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	if (unlikely(!page))
+		page = __rmqueue_smallest(zone, order, migratetype);
+#else
 	page = __rmqueue_smallest(zone, order, migratetype);
+#endif
+
 	if (unlikely(!page)) {
 		page = __rmqueue_fallback(zone, order, migratetype);
 	}
+
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	/* order-0 fallback */
+	if (!page && (order == 0) && unmovable_isolate_enable)
+		page = __rmqueue_smallest(zone, order, MIGRATE_UNMOVABLE_ISOLATE1);
+#endif
 
 	trace_mm_page_alloc_zone_locked(page, order, migratetype);
 	return page;
@@ -2258,6 +2325,9 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 			int migratetype, bool cold)
 {
 	int i, alloced = 0;
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	int page_migratetype;
+#endif
 
 	spin_lock(&zone->lock);
 	for (i = 0; i < count; ++i) {
@@ -2293,9 +2363,22 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 			list_add_tail(&page->lru, list);
 		list = &page->lru;
 		alloced++;
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+		page_migratetype = get_pcppage_migratetype(page);
+		if (is_migrate_cma(page_migratetype))
+			__mod_zone_page_state(zone, NR_FREE_CMA_PAGES,
+					      -(1 << order));
+		else if (is_unmovable_isolate1(page_migratetype))
+			__mod_zone_page_state(zone, NR_FREE_UNMOVABLE_ISOLATE1_PAGES,
+					      -(1 << order));
+		else if (is_unmovable_isolate2(page_migratetype))
+			__mod_zone_page_state(zone, NR_FREE_UNMOVABLE_ISOLATE2_PAGES,
+					      -(1 << order));
+#else
 		if (is_migrate_cma(get_pcppage_migratetype(page)))
 			__mod_zone_page_state(zone, NR_FREE_CMA_PAGES,
 					      -(1 << order));
+#endif
 	}
 
 	/*
@@ -2539,7 +2622,16 @@ void free_hot_cold_page(struct page *page, bool cold)
 			free_one_page(zone, page, pfn, 0, migratetype);
 			goto out;
 		}
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+		/* Free unmovable-isolate pages back to Unmovable pcp list */
+		if (is_unmovable_isolate1(migratetype) ||
+		    is_unmovable_isolate2(migratetype))
+			migratetype = MIGRATE_UNMOVABLE;
+		else
+			migratetype = MIGRATE_MOVABLE;
+#else
 		migratetype = MIGRATE_MOVABLE;
+#endif
 	}
 
 	pcp = &this_cpu_ptr(zone->pageset)->pcp;
@@ -2878,6 +2970,19 @@ bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,
 	if (!(alloc_flags & ALLOC_CMA))
 		free_pages -= zone_page_state(z, NR_FREE_CMA_PAGES);
 #endif
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	/* If allocation can't use UNMOVABLE_ISOLATE areas don't use free unmovable isolate pages */
+	if (unmovable_isolate_enabled(z)) {
+		if (!valid_order_for_ui(order,MIGRATE_UNMOVABLE_ISOLATE1))
+			free_pages -=
+					zone_page_state(z, NR_FREE_UNMOVABLE_ISOLATE1_PAGES);
+
+		if (!((alloc_flags & ALLOC_UNMOVABLE) &&
+		    (valid_order_for_ui(order,MIGRATE_UNMOVABLE_ISOLATE2))))
+			free_pages -=
+					zone_page_state(z, NR_FREE_UNMOVABLE_ISOLATE2_PAGES);
+	}
+#endif
 
 	/*
 	 * Check watermarks for an order-0 allocation request. If these
@@ -2921,6 +3026,21 @@ bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,
 		if (alloc_harder &&
 			!list_empty(&area->free_list[MIGRATE_HIGHATOMIC]))
 			return true;
+
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+		if(unmovable_isolate_enabled(z))
+		{
+			if (valid_order_for_ui(order,MIGRATE_UNMOVABLE_ISOLATE1) &&
+				!list_empty(&area->free_list[MIGRATE_UNMOVABLE_ISOLATE1])) {
+				return true;
+			}
+
+			if ((alloc_flags & ALLOC_UNMOVABLE) && valid_order_for_ui(order,MIGRATE_UNMOVABLE_ISOLATE2) &&
+				!list_empty(&area->free_list[MIGRATE_UNMOVABLE_ISOLATE2])) {
+				return true;
+			}
+		}
+#endif
 	}
 	return false;
 }
@@ -2994,6 +3114,10 @@ get_page_from_freelist(gfp_t gfp_mask, unsigned int order, int alloc_flags,
 	struct zoneref *z = ac->preferred_zoneref;
 	struct zone *zone;
 	struct pglist_data *last_pgdat_dirty_limit = NULL;
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+	if (ac->migratetype == MIGRATE_UNMOVABLE)
+		alloc_flags |= ALLOC_UNMOVABLE;
+#endif
 
 	/*
 	 * Scan zonelist, looking for a zone with enough free.
@@ -3146,7 +3270,9 @@ void warn_alloc(gfp_t gfp_mask, const char *fmt, ...)
 	va_end(args);
 
 	pr_cont(", mode:%#x(%pGg)\n", gfp_mask, &gfp_mask);
-
+#ifdef CONFIG_HW_MEMORY_MONITOR
+	count_mmonitor_event(ALLOC_FAILED_COUNT);
+#endif
 	dump_stack();
 	warn_alloc_show_mem(gfp_mask);
 }
@@ -3689,6 +3815,9 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 				(__GFP_ATOMIC|__GFP_DIRECT_RECLAIM)))
 		gfp_mask &= ~__GFP_ATOMIC;
 
+#ifdef CONFIG_HW_MEMORY_MONITOR
+        delayacct_allocpages_start();
+#endif
 retry_cpuset:
 	compaction_retries = 0;
 	no_progress_loops = 0;
@@ -3819,6 +3948,9 @@ retry:
 
 
 	/* Try direct reclaim and then allocating */
+#ifdef CONFIG_HISI_SLOW_PATH_COUNT
+	pgalloc_count_inc(1, order);
+#endif
 	page = __alloc_pages_direct_reclaim(gfp_mask, order, alloc_flags, ac,
 							&did_some_progress);
 	if (page)
@@ -3898,6 +4030,9 @@ nopage:
 	warn_alloc(gfp_mask,
 			"page allocation failure: order:%u", order);
 got_pg:
+#ifdef CONFIG_HW_MEMORY_MONITOR
+        delayacct_allocpages_end(order);
+#endif
 	return page;
 }
 
@@ -3925,6 +4060,9 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 			ac.nodemask = &cpuset_current_mems_allowed;
 	}
 
+#ifdef CONFIG_HISI_SLOW_PATH_COUNT
+	pgalloc_count_inc(0, order);
+#endif
 	gfp_mask &= gfp_allowed_mask;
 
 	lockdep_trace_alloc(gfp_mask);
@@ -4321,6 +4459,11 @@ long si_mem_available(void)
 	available += global_page_state(NR_SLAB_RECLAIMABLE) -
 		     min(global_page_state(NR_SLAB_RECLAIMABLE) / 2, wmark_low);
 
+#ifdef CONFIG_TASK_PROTECT_LRU
+	available -= (long)global_page_state(NR_PROTECT_ACTIVE_FILE);
+#endif
+	available += global_page_state(NR_IONCACHE_PAGES);
+
 	if (available < 0)
 		available = 0;
 	return available;
@@ -4405,6 +4548,10 @@ static void show_migration_types(unsigned char type)
 #ifdef CONFIG_CMA
 		[MIGRATE_CMA]		= 'C',
 #endif
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+		[MIGRATE_UNMOVABLE_ISOLATE1]	= '1',
+		[MIGRATE_UNMOVABLE_ISOLATE2]	= '2',
+#endif
 #ifdef CONFIG_MEMORY_ISOLATION
 		[MIGRATE_ISOLATE]	= 'I',
 #endif
@@ -4436,6 +4583,7 @@ void show_free_areas(unsigned int filter)
 	unsigned long free_pcp = 0;
 	int cpu;
 	struct zone *zone;
+	unsigned long ion_total = get_ion_total();
 	pg_data_t *pgdat;
 
 	for_each_populated_zone(zone) {
@@ -4448,16 +4596,29 @@ void show_free_areas(unsigned int filter)
 
 	printk("active_anon:%lu inactive_anon:%lu isolated_anon:%lu\n"
 		" active_file:%lu inactive_file:%lu isolated_file:%lu\n"
+#ifdef CONFIG_TASK_PROTECT_LRU
+		" active_prot_anon:%lu inactive_prot_anon:%lu\n"
+		" active_prot_file:%lu inactive_prot_file:%lu\n"
+#endif
 		" unevictable:%lu dirty:%lu writeback:%lu unstable:%lu\n"
 		" slab_reclaimable:%lu slab_unreclaimable:%lu\n"
 		" mapped:%lu shmem:%lu pagetables:%lu bounce:%lu\n"
-		" free:%lu free_pcp:%lu free_cma:%lu\n",
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+		" free_unmovable_isolate1:%lu free_unmovable_isolate2:%lu\n"
+#endif
+		" free:%lu free_pcp:%lu free_cma:%lu ion_used:%lu\n",
 		global_node_page_state(NR_ACTIVE_ANON),
 		global_node_page_state(NR_INACTIVE_ANON),
 		global_node_page_state(NR_ISOLATED_ANON),
 		global_node_page_state(NR_ACTIVE_FILE),
 		global_node_page_state(NR_INACTIVE_FILE),
 		global_node_page_state(NR_ISOLATED_FILE),
+#ifdef CONFIG_TASK_PROTECT_LRU
+		global_page_state(NR_PROTECT_ACTIVE_ANON),
+		global_page_state(NR_PROTECT_INACTIVE_ANON),
+		global_page_state(NR_PROTECT_ACTIVE_FILE),
+		global_page_state(NR_PROTECT_INACTIVE_FILE),
+#endif
 		global_node_page_state(NR_UNEVICTABLE),
 		global_node_page_state(NR_FILE_DIRTY),
 		global_node_page_state(NR_WRITEBACK),
@@ -4468,9 +4629,14 @@ void show_free_areas(unsigned int filter)
 		global_node_page_state(NR_SHMEM),
 		global_page_state(NR_PAGETABLE),
 		global_page_state(NR_BOUNCE),
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+		global_page_state(NR_FREE_UNMOVABLE_ISOLATE1_PAGES),
+		global_page_state(NR_FREE_UNMOVABLE_ISOLATE2_PAGES),
+#endif
 		global_page_state(NR_FREE_PAGES),
 		free_pcp,
-		global_page_state(NR_FREE_CMA_PAGES));
+		global_page_state(NR_FREE_CMA_PAGES),
+		ion_total >> PAGE_SHIFT);
 
 	for_each_online_pgdat(pgdat) {
 		printk("Node %d"
@@ -4539,6 +4705,12 @@ void show_free_areas(unsigned int filter)
 			" inactive_anon:%lukB"
 			" active_file:%lukB"
 			" inactive_file:%lukB"
+#ifdef CONFIG_TASK_PROTECT_LRU
+			" active_prot_anon:%lukB"
+			" inactive_prot_anon:%lukB"
+			" active_prot_file:%lukB"
+			" inactive_prot_file:%lukB"
+#endif
 			" unevictable:%lukB"
 			" writepending:%lukB"
 			" present:%lukB"
@@ -4551,6 +4723,10 @@ void show_free_areas(unsigned int filter)
 			" bounce:%lukB"
 			" free_pcp:%lukB"
 			" local_pcp:%ukB"
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+			" free_unmovable_isolate1:%lukB"
+			" free_unmovable_isolate2:%lukB"
+#endif
 			" free_cma:%lukB"
 			"\n",
 			zone->name,
@@ -4562,6 +4738,12 @@ void show_free_areas(unsigned int filter)
 			K(zone_page_state(zone, NR_ZONE_INACTIVE_ANON)),
 			K(zone_page_state(zone, NR_ZONE_ACTIVE_FILE)),
 			K(zone_page_state(zone, NR_ZONE_INACTIVE_FILE)),
+#ifdef CONFIG_TASK_PROTECT_LRU
+			K(zone_page_state(zone, NR_PROTECT_ACTIVE_ANON)),
+			K(zone_page_state(zone, NR_PROTECT_INACTIVE_ANON)),
+			K(zone_page_state(zone, NR_PROTECT_ACTIVE_FILE)),
+			K(zone_page_state(zone, NR_PROTECT_INACTIVE_FILE)),
+#endif
 			K(zone_page_state(zone, NR_ZONE_UNEVICTABLE)),
 			K(zone_page_state(zone, NR_ZONE_WRITE_PENDING)),
 			K(zone->present_pages),
@@ -4574,6 +4756,10 @@ void show_free_areas(unsigned int filter)
 			K(zone_page_state(zone, NR_BOUNCE)),
 			K(free_pcp),
 			K(this_cpu_read(zone->pageset->pcp.count)),
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+			K(zone_page_state(zone, NR_FREE_UNMOVABLE_ISOLATE1_PAGES)),
+			K(zone_page_state(zone, NR_FREE_UNMOVABLE_ISOLATE2_PAGES)),
+#endif
 			K(zone_page_state(zone, NR_FREE_CMA_PAGES)));
 		printk("lowmem_reserve[]:");
 		for (i = 0; i < MAX_NR_ZONES; i++)
@@ -6855,6 +7041,12 @@ static void __setup_per_zone_wmarks(void)
 		zone->watermark[WMARK_HIGH] =
 					min_wmark_pages(zone) + low + min * 2;
 
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+		setup_zone_migrate_unmovable_isolate(zone, MIGRATE_UNMOVABLE_ISOLATE1,
+			unmovable_isolate_disabled);
+		setup_zone_migrate_unmovable_isolate(zone, MIGRATE_UNMOVABLE_ISOLATE2,
+			unmovable_isolate_disabled);
+#endif
 		spin_unlock_irqrestore(&zone->lock, flags);
 	}
 
@@ -7083,6 +7275,26 @@ out:
 	mutex_unlock(&pcp_batch_high_lock);
 	return ret;
 }
+
+#ifdef CONFIG_HUAWEI_UNMOVABLE_ISOLATE
+int unmovable_isolate_disabled_sysctl_handler(struct ctl_table *table, int write,
+	void __user *buffer, size_t *length, loff_t *ppos)
+{
+	struct zone* zone;
+	int ret;
+	ret = proc_dointvec_minmax(table, write, buffer, length, ppos);
+	if (!write || ret < 0)
+		return ret;
+
+	for_each_zone(zone) {
+		setup_zone_migrate_unmovable_isolate(zone, MIGRATE_UNMOVABLE_ISOLATE1,
+			unmovable_isolate_disabled);
+		setup_zone_migrate_unmovable_isolate(zone, MIGRATE_UNMOVABLE_ISOLATE2,
+			unmovable_isolate_disabled);
+	}
+	return ret;
+}
+#endif
 
 #ifdef CONFIG_NUMA
 int hashdist = HASHDIST_DEFAULT;

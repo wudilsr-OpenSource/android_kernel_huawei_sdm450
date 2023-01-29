@@ -33,6 +33,21 @@
 #include <soc/qcom/watchdog.h>
 #include <linux/dma-mapping.h>
 
+#ifdef CONFIG_FASTBOOT_DUMP
+#include <linux/fastboot_dump_reason_api.h>
+#endif
+#ifdef CONFIG_HUAWEI_BFM
+#include <chipset_common/bfmr/bfm/chipsets/qcom/bfm_qcom.h>
+#endif
+
+#ifdef CONFIG_HUAWEI_RESET_DETECT
+#include <linux/huawei_reset_detect.h>
+#endif
+
+#ifndef CONFIG_FINAL_RELEASE
+#include <linux/input/qpnp-power-on.h>
+#endif
+
 #define MODULE_NAME "msm_watchdog"
 #define WDT0_ACCSCSSNBARK_INT 0
 #define TCSR_WDT_CFG	0x30
@@ -497,6 +512,9 @@ void msm_trigger_wdog_bite(void)
 	if (!wdog_data)
 		return;
 	pr_info("Causing a watchdog bite!");
+#ifndef CONFIG_FINAL_RELEASE
+	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+#endif
 	__raw_writel(1, wdog_data->base + WDT0_BITE_TIME);
 	/* Mke sure bite time is written before we reset */
 	mb();
@@ -512,11 +530,39 @@ void msm_trigger_wdog_bite(void)
 		__raw_readl(wdog_data->base + WDT0_BITE_TIME));
 }
 
+#ifdef CONFIG_HUAWEI_BFM
+void msm_trigger_wdog_bark(void)
+{
+	if (!wdog_data)
+		return;
+	pr_info("Causing a watchdog brark!");
+#ifndef CONFIG_FINAL_RELEASE
+	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+#endif
+	__raw_writel(1, wdog_data->base + WDT0_BARK_TIME);
+	mb();
+	__raw_writel(1, wdog_data->base + WDT0_RST);
+	mb();
+	/* Delay to make sure bark occurs */
+	mdelay(10000);
+	pr_err("Wdog - STS: 0x%x, CTL: 0x%x, BARK TIME: 0x%x, BITE TIME: 0x%x",
+		__raw_readl(wdog_data->base + WDT0_STS),
+		__raw_readl(wdog_data->base + WDT0_EN),
+		__raw_readl(wdog_data->base + WDT0_BARK_TIME),
+		__raw_readl(wdog_data->base + WDT0_BITE_TIME));
+}
+#endif
+
 static irqreturn_t wdog_bark_handler(int irq, void *dev_id)
 {
 	struct msm_watchdog_data *wdog_dd = (struct msm_watchdog_data *)dev_id;
 	unsigned long nanosec_rem;
 	unsigned long long t = sched_clock();
+
+#ifdef CONFIG_HUAWEI_BFM
+		qcom_set_boot_fail_flag(KERNEL_AP_WDT);
+		pr_err("Boot_monitor detect error:KERNEL_AP_WDT\n");
+#endif
 
 	nanosec_rem = do_div(t, 1000000000);
 	dev_info(wdog_dd->dev, "Watchdog bark! Now = %lu.%06lu\n",
@@ -527,6 +573,13 @@ static irqreturn_t wdog_bark_handler(int irq, void *dev_id)
 			(unsigned long) wdog_dd->last_pet, nanosec_rem / 1000);
 	if (wdog_dd->do_ipi_ping)
 		dump_cpu_alive_mask(wdog_dd);
+#ifdef CONFIG_HUAWEI_RESET_DETECT
+    set_reset_magic(RESET_MAGIC_WDT_BARK);
+#endif
+#ifdef CONFIG_FASTBOOT_DUMP
+	fastboot_dump_m_reason_set(FD_M_AWDT);
+	fastboot_dump_s_reason_set(FD_S_AWDT);
+#endif
 	msm_trigger_wdog_bite();
 	panic("Failed to cause a watchdog bite! - Falling back to kernel panic!");
 	return IRQ_HANDLED;

@@ -77,6 +77,7 @@ struct radio_hci_dev {
 	void (*close_smd)(void);
 };
 
+void setHeadsetStatus(bool status);
 int radio_hci_register_dev(struct radio_hci_dev *hdev);
 int radio_hci_unregister_dev(void);
 int radio_hci_recv_frame(struct sk_buff *skb);

@@ -26,21 +26,6 @@ struct msm_sensor_power_setting_array32 {
 	uint16_t size_down;
 };
 
-struct msm_camera_i2c_reg_setting32 {
-	compat_uptr_t reg_setting;
-	uint16_t size;
-	enum msm_camera_i2c_reg_addr_type addr_type;
-	enum msm_camera_i2c_data_type data_type;
-	uint16_t delay;
-};
-
-struct msm_sensor_id_info_t32 {
-	unsigned short sensor_id_reg_addr;
-	unsigned short sensor_id;
-	unsigned short sensor_id_mask;
-	struct msm_camera_i2c_reg_setting32 setting;
-};
-
 struct msm_camera_sensor_slave_info32 {
 	char sensor_name[32];
 	char eeprom_name[32];
@@ -51,12 +36,15 @@ struct msm_camera_sensor_slave_info32 {
 	uint16_t slave_addr;
 	enum i2c_freq_mode_t i2c_freq_mode;
 	enum msm_camera_i2c_reg_addr_type addr_type;
-	struct msm_sensor_id_info_t32 sensor_id_info;
+	struct msm_sensor_id_info_t sensor_id_info;
 	struct msm_sensor_power_setting_array32 power_setting_array;
 	uint8_t  is_init_params_valid;
 	struct msm_sensor_init_params sensor_init_params;
 	enum msm_sensor_output_format_t output_format;
 	uint8_t bypass_video_node_creation;
+	struct dump_reg_info_t dump_reg_info[30];
+	unsigned short dump_reg_num;
+	msm_module_id_info_t module_id_info;
 };
 
 struct msm_camera_csid_lut_params32 {
@@ -118,10 +106,21 @@ struct eeprom_write_t32 {
 	uint32_t num_bytes;
 };
 
+struct msm_eeprom_control_t32 {
+	uint16_t slave_addr;
+	uint16_t reg_addr;
+	enum msm_camera_i2c_reg_addr_type i2c_addr_type;
+	compat_uptr_t dbuffer;
+	enum msm_camera_i2c_data_type i2c_data_type;
+	uint32_t num_bytes;
+	uint32_t write_byte_delay_ms;
+};
+
 struct msm_eeprom_info_t32 {
 	compat_uptr_t power_setting_array;
 	enum i2c_freq_mode_t i2c_freq_mode;
 	compat_uptr_t mem_map_array;
+	compat_uptr_t eeprom_control;
 };
 
 struct msm_eeprom_cfg_data32 {
@@ -140,6 +139,14 @@ struct msm_camera_i2c_seq_reg_setting32 {
 	compat_uptr_t reg_setting;
 	uint16_t size;
 	enum msm_camera_i2c_reg_addr_type addr_type;
+	uint16_t delay;
+};
+
+struct msm_camera_i2c_reg_setting32 {
+	compat_uptr_t reg_setting;
+	uint16_t size;
+	enum msm_camera_i2c_reg_addr_type addr_type;
+	enum msm_camera_i2c_data_type data_type;
 	uint16_t delay;
 };
 

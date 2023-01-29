@@ -24,6 +24,7 @@
 #include <linux/usb/hcd.h>
 #include "usb.h"
 
+extern bool usb2_linkPM_only_disable; /*not only enable USB 2.0 Link PM*/
 struct usb_hub {
 	struct device		*intfdev;	/* the "interface" device */
 	struct usb_device	*hdev;

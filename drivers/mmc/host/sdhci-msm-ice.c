@@ -13,6 +13,23 @@
 
 #include "sdhci-msm-ice.h"
 
+static bool platform_ice_enabled = true;
+
+static int __init is_platform_ice_enabled(char *platform)
+{
+	unsigned int value = 0;
+
+	if(platform && strnstr(platform, "SDM450", sizeof(platform)) && (IS_ENABLED(CONFIG_F2FS_FS_ICE_ENCRYPTION)))
+		platform_ice_enabled = true;
+	else
+		platform_ice_enabled = false;
+
+	pr_err("is_platform_ice_enabled: platform = %s, platform_ice_enabled = %d\n", platform, platform_ice_enabled);
+
+	return 0;
+}
+early_param("androidboot.chiptype", is_platform_ice_enabled);
+
 static void sdhci_msm_ice_error_cb(void *host_ctrl, u32 error)
 {
 	struct sdhci_msm_host *msm_host = (struct sdhci_msm_host *)host_ctrl;
@@ -116,6 +133,13 @@ int sdhci_msm_ice_get_dev(struct sdhci_host *host)
 		return -EINVAL;
 	}
 
+	if(!platform_ice_enabled) {
+		msm_host->ice.pdev = NULL;
+		msm_host->ice.vops = NULL;
+		pr_err("this platform do not support ICE.\n");
+		return -ENODEV;
+	}
+
 	sdhc_dev = &msm_host->pdev->dev;
 	msm_host->ice.vops  = sdhci_msm_ice_get_vops(sdhc_dev);
 	msm_host->ice.pdev = sdhci_msm_ice_get_pdevice(sdhc_dev);
@@ -207,6 +231,9 @@ out:
 
 void sdhci_msm_ice_cfg_reset(struct sdhci_host *host, u32 slot)
 {
+	if(!platform_ice_enabled) {
+		return;
+	}
 	writel_relaxed(SDHCI_MSM_ICE_ENABLE_BYPASS,
 		host->ioaddr + CORE_VENDOR_SPEC_ICE_CTRL_INFO_3_n + 16 * slot);
 }
@@ -450,6 +477,10 @@ int sdhci_msm_ice_reset(struct sdhci_host *host)
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_msm_host *msm_host = pltfm_host->priv;
 	int err = 0;
+
+	if(!platform_ice_enabled) {
+		return 0;
+	}
 
 	if (msm_host->ice.state != SDHCI_MSM_ICE_STATE_ACTIVE) {
 		pr_err("%s: ice is in invalid state before reset %d\n",

@@ -101,6 +101,14 @@ config BLK_DEV_THROTTLING
 
 	See Documentation/cgroups/blkio-controller.txt for more information.
 
+config BLK_DEV_HI_PRIO_FOR_FG
+	bool "Block layer high priority for foreground requests support"
+	depends on BLK_DEV_THROTTLING=y
+	default n
+	---help---
+	Give high priority for foreground requests, reserve some tags for
+	forground requests to make sure these requests have low lantency.
+
 config BLK_CMDLINE_PARSER
 	bool "Block device command line partition parser"
 	default n
@@ -124,6 +132,11 @@ config BLOCK_COMPAT
 	bool
 	depends on BLOCK && COMPAT
 	default y
+
+config HW_SYSTEM_WR_PROTECT
+	bool "write protection function of system partitions."
+	depends on BLOCK && HUAWEI_QCOM_MMC
+	default n
 
 config BLK_MQ_PCI
 	bool

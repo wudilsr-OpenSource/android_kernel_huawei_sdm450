@@ -45,6 +45,7 @@
 #include <linux/kernel.h>
 #include <linux/bug.h>
 #include <linux/sched.h>
+#include <linux/fastboot_dump_reason_api.h>
 
 extern const struct bug_entry __start___bug_table[], __stop___bug_table[];
 
@@ -173,12 +174,32 @@ enum bug_trap_type report_bug(unsigned long bugaddr, struct pt_regs *regs)
 	}
 
 	printk(KERN_DEFAULT "------------[ cut here ]------------\n");
-
+#ifdef CONFIG_FASTBOOT_DUMP
 	if (file)
+	{
 		pr_crit("kernel BUG at %s:%u!\n", file, line);
+		fastboot_dump_s_reason_set(FD_S_APANIC_BUG);
+		fastboot_dump_s_reason_str_set("Trigger_BUG_macro");
+		fastboot_dump_reset_reason_info_str_set("BUG at %s:%u!",file, line);
+	}
 	else
+	{
 		pr_crit("Kernel BUG at %p [verbose debug info unavailable]\n",
 			(void *)bugaddr);
-
+		fastboot_dump_s_reason_set(FD_S_APANIC_BUG);
+		fastboot_dump_s_reason_str_set("Trigger_BUG_macro");
+		fastboot_dump_reset_reason_info_str_set("BUG unavailable at %p!",(void *)bugaddr);
+	}
+#else
+        if (file)
+        {
+                pr_crit("kernel BUG at %s:%u!\n", file, line);
+        }
+        else
+        {
+                pr_crit("Kernel BUG at %p [verbose debug info unavailable]\n",
+                        (void *)bugaddr);
+        }
+#endif
 	return BUG_TRAP_TYPE_BUG;
 }

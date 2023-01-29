@@ -24,6 +24,7 @@
 #include <linux/bio.h>
 #include <linux/namei.h>
 #include "fscrypt_private.h"
+
 /*
  * Call fscrypt_decrypt_page on every single page, reusing the encryption
  * context.
@@ -38,11 +39,12 @@ static void completion_pages(struct work_struct *work)
 
 	bio_for_each_segment_all(bv, bio, i) {
 		struct page *page = bv->bv_page;
-		if (fs_is_ice_enabled()) {
+		if (is_platform_hardware_fbe_enabled())
 			SetPageUptodate(page);
-		} else {
-			int ret = fscrypt_decrypt_page(page->mapping->host,
-				page, PAGE_SIZE, 0, page->index);
+		else {
+			int ret = fscrypt_decrypt_page(page->mapping->host, page,
+					PAGE_SIZE, 0, page->index);
+
 			if (ret) {
 				WARN_ON_ONCE(1);
 				SetPageError(page);
@@ -56,13 +58,26 @@ static void completion_pages(struct work_struct *work)
 	bio_put(bio);
 }
 
-void fscrypt_decrypt_bio_pages(struct fscrypt_ctx *ctx, struct bio *bio)
+static inline void do_decrypt_dio_bio_pages(struct fscrypt_ctx *ctx,
+                                           struct bio *bio, work_func_t func)
 {
-	INIT_WORK(&ctx->r.work, completion_pages);
+	INIT_WORK(&ctx->r.work, func);
 	ctx->r.bio = bio;
 	queue_work(fscrypt_read_workqueue, &ctx->r.work);
 }
+
+void fscrypt_decrypt_bio_pages(struct fscrypt_ctx *ctx, struct bio *bio)
+{
+	do_decrypt_dio_bio_pages(ctx, bio, completion_pages);
+}
 EXPORT_SYMBOL(fscrypt_decrypt_bio_pages);
+
+void fscrypt_decrypt_dio_bio_pages(struct fscrypt_ctx *ctx, struct bio *bio,
+                                  work_func_t func)
+{
+	do_decrypt_dio_bio_pages(ctx, bio, func);
+}
+EXPORT_SYMBOL(fscrypt_decrypt_dio_bio_pages);
 
 void fscrypt_pullback_bio_page(struct page **page, bool restore)
 {

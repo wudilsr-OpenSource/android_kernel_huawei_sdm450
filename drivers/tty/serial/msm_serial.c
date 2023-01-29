@@ -39,6 +39,9 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/wait.h>
+#ifdef CONFIG_SERIAL_MSM_CONSOLE
+#include "serial_log_switch/serial_log_switch.h"
+#endif
 
 #define UART_MR1			0x0000
 
@@ -395,22 +398,20 @@ no_rx:
 
 static inline void msm_wait_for_xmitr(struct uart_port *port)
 {
-	u32 count = 500000;
-
+    u32 count = 500000;
 	while (!(msm_read(port, UART_SR) & UART_SR_TX_EMPTY)) {
 		if (msm_read(port, UART_ISR) & UART_ISR_TX_READY)
 			break;
 		udelay(1);
 
-		/* At worst case, it is stuck in this loop for waiting
-		 * TX ready, have a 500ms timeout to avoid stuck here
-		 * and only miss some log to uart.
-		 */
-		if (count-- == 0) {
-			msm_write(port, UART_CR_CMD_RESET_TX, UART_CR);
-			printk_deferred("uart may lost data, resetting TX!\n");
-			break;
-		}
+        /* At worst case, it is stuck in this loop for waiting
+        * TX ready, have a 500ms timeout to avoid stuck here
+        * and only miss some log to uart.
+        */
+        if (count-- == 0) {
+            printk_deferred("msm uart console may lost data!!!\n");
+            break;
+        }
 	}
 	msm_write(port, UART_CR_CMD_RESET_TX_READY, UART_CR);
 }
@@ -1798,6 +1799,13 @@ static int msm_serial_probe(struct platform_device *pdev)
 
 	dev_info(&pdev->dev, "msm_serial: detected port #%d\n", line);
 
+#ifdef CONFIG_SERIAL_MSM_CONSOLE
+       /* Port 0(uart 2) used for console. */
+       if (!is_serial_log_enabled() && 0 == line) {
+               pr_info("serial console disabled, do not register ttyMSM0.\n");
+               return -ENODEV;
+       }
+#endif
 	port = msm_get_port_from_line(line);
 	port->dev = &pdev->dev;
 	msm_port = UART_TO_MSM(port);

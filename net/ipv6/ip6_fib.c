@@ -379,12 +379,13 @@ static int fib6_dump_table(struct fib6_table *table, struct sk_buff *skb,
 
 		read_lock_bh(&table->tb6_lock);
 		res = fib6_walk(net, w);
-		read_unlock_bh(&table->tb6_lock);
 		if (res > 0) {
 			cb->args[4] = 1;
 			cb->args[5] = w->root->fn_sernum;
 		}
+		read_unlock_bh(&table->tb6_lock);
 	} else {
+		read_lock_bh(&table->tb6_lock);
 		if (cb->args[5] != w->root->fn_sernum) {
 			/* Begin at the root if the tree changed */
 			cb->args[5] = w->root->fn_sernum;
@@ -394,7 +395,6 @@ static int fib6_dump_table(struct fib6_table *table, struct sk_buff *skb,
 		} else
 			w->skip = 0;
 
-		read_lock_bh(&table->tb6_lock);
 		res = fib6_walk_continue(w);
 		read_unlock_bh(&table->tb6_lock);
 		if (res <= 0) {
@@ -1594,6 +1594,9 @@ skip:
 				return 0;
 			pn = fn->parent;
 			w->node = pn;
+			if(!pn) {
+				return 0;
+			}
 #ifdef CONFIG_IPV6_SUBTREES
 			if (FIB6_SUBTREE(pn) == fn) {
 				WARN_ON(!(fn->fn_flags & RTN_ROOT));

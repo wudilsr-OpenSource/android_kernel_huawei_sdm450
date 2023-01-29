@@ -67,9 +67,14 @@ struct vib_ldo_chip {
 
 static inline int qpnp_vib_ldo_poll_status(struct vib_ldo_chip *chip)
 {
-	unsigned int val;
-	int ret;
+	unsigned int val = 0;
+	int ret = -1;
 
+	if (NULL == chip)
+	{
+		pr_err("qpnp_vib_ldo_poll_status: input is invalid\n");
+		return ret;
+	}
 	ret = regmap_read_poll_timeout(chip->regmap,
 			chip->base + QPNP_VIB_LDO_REG_STATUS1, val,
 			val & QPNP_VIB_LDO_VREG_READY, 100, 1000);
@@ -88,6 +93,7 @@ static inline int qpnp_vib_ldo_poll_status(struct vib_ldo_chip *chip)
 
 static int qpnp_vib_ldo_set_voltage(struct vib_ldo_chip *chip, int new_uV)
 {
+	unsigned int val;
 	u32 vlevel;
 	u8 reg[2];
 	int ret;

@@ -62,7 +62,6 @@ Charger specific properties:
   Usage:      optional
   Value type: bool
   Definition: Boolean property to enable h/w controlled die temp mitigation.
-
 ================================================
 Second Level Nodes - SMB1355 Charger Peripherals
 ================================================

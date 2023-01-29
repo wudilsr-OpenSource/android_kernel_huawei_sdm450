@@ -244,6 +244,7 @@ static int fw_lookup_and_allocate_buf(const char *fw_name,
 			return 1;
 		}
 	}
+	pr_err("%s: __allocate_fw_buf\n", __func__);
 	tmp = __allocate_fw_buf(fw_name, fwc, dbuf, size);
 	if (tmp && !(opt_flags & FW_OPT_NOCACHE))
 		list_add(&tmp->list, &fwc->head);
@@ -297,7 +298,8 @@ static const char * const fw_path[] = {
 	"/lib/firmware/updates/" UTS_RELEASE,
 	"/lib/firmware/updates",
 	"/lib/firmware/" UTS_RELEASE,
-	"/lib/firmware"
+	"/lib/firmware",
+	"/vendor/etc"
 };
 
 /*
@@ -327,6 +329,7 @@ fw_get_filesystem_firmware(struct device *device, struct firmware_buf *buf)
 	enum kernel_read_file_id id = READING_FIRMWARE;
 	size_t msize = INT_MAX;
 
+	dev_err(device, "fw_get_filesystem_firmware enter\n");
 	/* Already populated data member means we're loading into a buffer */
 	if (buf->data) {
 		id = READING_FIRMWARE_PREALLOC_BUFFER;
@@ -1067,6 +1070,8 @@ _request_firmware_prepare(struct firmware **firmware_p, const char *name,
 			__func__);
 		return -ENOMEM;
 	}
+	dev_err(device, "%s: kmalloc(struct firmware) success\n",
+			__func__);
 
 	if (fw_get_builtin_firmware(firmware, name, dbuf, size)) {
 		dev_dbg(device, "using built-in %s\n", name);
@@ -1075,7 +1080,8 @@ _request_firmware_prepare(struct firmware **firmware_p, const char *name,
 
 	ret = fw_lookup_and_allocate_buf(name, &fw_cache, &buf, dbuf, size,
 					opt_flags);
-
+	dev_err(device, "%s: fw_lookup_and_allocate_buf success ret = %d\n",
+			__func__,ret);
 	/*
 	 * bind with 'buf' now to avoid warning in failure path
 	 * of requesting firmware.
@@ -1084,6 +1090,8 @@ _request_firmware_prepare(struct firmware **firmware_p, const char *name,
 
 	if (ret > 0) {
 		ret = sync_cached_firmware_buf(buf);
+		dev_err(device, "%s: sync_cached_firmware_buf success ret = %d\n",
+			__func__,ret);
 		if (!ret) {
 			fw_set_page_data(buf, firmware);
 			return 0; /* assigned */
@@ -1154,15 +1162,17 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 
 	ret = _request_firmware_prepare(&fw, name, device, buf, size,
 					opt_flags);
+	dev_err(device, "_request_firmware_prepare success ret = %d\n",ret);
 	if (ret <= 0) /* error or already assigned */
 		goto out;
 
 	ret = 0;
 	timeout = firmware_loading_timeout();
+	dev_err(device, "firmware_loading_timeout : timeout = %d, opt_flags = %d\n",timeout,opt_flags);
 	if (opt_flags & FW_OPT_NOWAIT) {
 		timeout = usermodehelper_read_lock_wait(timeout);
 		if (!timeout) {
-			dev_dbg(device, "firmware: %s loading timed out\n",
+			dev_err(device, "firmware: %s loading timed out\n",
 				name);
 			ret = -EBUSY;
 			goto out;
@@ -1177,13 +1187,14 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 	}
 
 	ret = fw_get_filesystem_firmware(device, fw->priv);
+	dev_err(device, "fw_get_filesystem_firmware ret = %d\n",ret);
 	if (ret) {
 		if (!(opt_flags & FW_OPT_NO_WARN))
-			dev_dbg(device,
+			dev_err(device,
 				 "Firmware %s was not found in kernel paths. rc:%d\n",
 				 name, ret);
 		if (opt_flags & FW_OPT_USERHELPER) {
-			dev_dbg(device, "Falling back to user helper\n");
+			dev_err(device, "Falling back to user helper\n");
 			ret = fw_load_from_user_helper(fw, name, device,
 						       opt_flags, timeout);
 		}
@@ -1191,7 +1202,7 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 
 	if (!ret)
 		ret = assign_firmware_buf(fw, device, opt_flags);
-
+	dev_err(device, "assign_firmware_buf end ret = %d\n",ret);
 	usermodehelper_read_unlock();
 
  out:

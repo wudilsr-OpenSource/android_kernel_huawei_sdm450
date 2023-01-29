@@ -110,6 +110,7 @@ config ARM64
 	select SPARSE_IRQ
 	select SYSCTL_EXCEPTION_TRACE
 	select THREAD_INFO_IN_TASK
+	select HAVE_LIVEPATCH
 	help
 	  ARM 64-bit (AArch64) Linux support.
 
@@ -246,6 +247,8 @@ config PGTABLE_LEVELS
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
+
+source "kernel/livepatch/Kconfig"
 
 source "arch/arm64/Kconfig.platforms"
 
@@ -1241,4 +1244,22 @@ if CRYPTO
 source "arch/arm64/crypto/Kconfig"
 endif
 
+config HUAWEI_KERNEL
+        bool "Use huawei code"
+        default n
+        help
+          use huawei code
+
+config HUAWEI_KERNEL_DEBUG
+        bool "Use Huawei kernel debug mode"
+        depends on HUAWEI_KERNEL
+        default n
+        help
+          Enable sysrq, dump mode and some debug masks by default.
+
 source "lib/Kconfig"
+config HUAWEI_QCOM_MMC
+        bool "Use huawei mmc code"
+        default n
+        help
+          use huawei mmc code

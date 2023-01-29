@@ -20,6 +20,9 @@
 #include <trace/events/power.h>
 #include <linux/wakeup_reason.h>
 #include <linux/cpuset.h>
+#ifdef CONFIG_HW_SYS_SYNC
+#include "sys_sync.h"
+#endif
 
 /*
  * Timeout for stopping processes
@@ -178,6 +181,11 @@ int freeze_kernel_threads(void)
 {
 	int error;
 
+#ifdef CONFIG_HW_SYS_SYNC
+	error = suspend_sys_sync_wait();
+	if(error)
+		return error;
+#endif
 	pr_info("Freezing remaining freezable tasks ... ");
 
 	pm_nosig_freezing = true;

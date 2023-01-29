@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,6 +35,10 @@
 #define SCM_INTERRUPTED		1
 #define SCM_EBUSY		-55
 #define SCM_V2_EBUSY		-12
+
+#define PFK_MAX_PAGE_SIZE	4096
+
+static char argbuf_pfk[PFK_MAX_PAGE_SIZE] = {0};
 
 static DEFINE_MUTEX(scm_lock);
 
@@ -635,28 +639,7 @@ static int allocate_extra_arg_buffer(struct scm_desc *desc, gfp_t flags)
 	return 0;
 }
 
-/**
- * scm_call2() - Invoke a syscall in the secure world
- * @fn_id: The function ID for this syscall
- * @desc: Descriptor structure containing arguments and return values
- *
- * Sends a command to the SCM and waits for the command to finish processing.
- * This should *only* be called in pre-emptible context.
- *
- * A note on cache maintenance:
- * Note that any buffers that are expected to be accessed by the secure world
- * must be flushed before invoking scm_call and invalidated in the cache
- * immediately after scm_call returns. An important point that must be noted
- * is that on ARMV8 architectures, invalidation actually also causes a dirty
- * cache line to be cleaned (flushed + unset-dirty-bit). Therefore it is of
- * paramount importance that the buffer be flushed before invoking scm_call2,
- * even if you don't care about the contents of that buffer.
- *
- * Note that cache maintenance on the argument buffer (desc->args) is taken care
- * of by scm_call2; however, callers are responsible for any other cached
- * buffers passed over to the secure world.
-*/
-int scm_call2(u32 fn_id, struct scm_desc *desc)
+static int __scm_call2(u32 fn_id, struct scm_desc *desc, bool retry)
 {
 	int arglen = desc->arginfo & 0xf;
 	int ret, retry_count = 0;
@@ -670,7 +653,6 @@ int scm_call2(u32 fn_id, struct scm_desc *desc)
 		return ret;
 
 	x0 = fn_id | scm_version_mask;
-
 	do {
 		mutex_lock(&scm_lock);
 
@@ -700,13 +682,17 @@ int scm_call2(u32 fn_id, struct scm_desc *desc)
 			mutex_unlock(&scm_lmh_lock);
 
 		mutex_unlock(&scm_lock);
+		if (!retry)
+		{
+			goto out;
+		}
 
 		if (ret == SCM_V2_EBUSY)
 			msleep(SCM_EBUSY_WAIT_MS);
 		if (retry_count == 33)
 			pr_warn("scm: secure world has been busy for 1 second!\n");
-	}  while (ret == SCM_V2_EBUSY && (retry_count++ < SCM_EBUSY_MAX_RETRY));
-
+	} while (ret == SCM_V2_EBUSY && (retry_count++ < SCM_EBUSY_MAX_RETRY));
+out:
 	if (ret < 0)
 		pr_err("scm_call failed: func id %#llx, ret: %d, syscall returns: %#llx, %#llx, %#llx\n",
 			x0, ret, desc->ret[0], desc->ret[1], desc->ret[2]);
@@ -717,7 +703,153 @@ int scm_call2(u32 fn_id, struct scm_desc *desc)
 		return scm_remap_error(ret);
 	return 0;
 }
+
+/**
+ * scm_call2() - Invoke a syscall in the secure world
+ * @fn_id: The function ID for this syscall
+ * @desc: Descriptor structure containing arguments and return values
+ *
+ * Sends a command to the SCM and waits for the command to finish processing.
+ * This should *only* be called in pre-emptible context.
+ *
+ * A note on cache maintenance:
+ * Note that any buffers that are expected to be accessed by the secure world
+ * must be flushed before invoking scm_call and invalidated in the cache
+ * immediately after scm_call returns. An important point that must be noted
+ * is that on ARMV8 architectures, invalidation actually also causes a dirty
+ * cache line to be cleaned (flushed + unset-dirty-bit). Therefore it is of
+ * paramount importance that the buffer be flushed before invoking scm_call2,
+ * even if you don't care about the contents of that buffer.
+ *
+ * Note that cache maintenance on the argument buffer (desc->args) is taken care
+ * of by scm_call2; however, callers are responsible for any other cached
+ * buffers passed over to the secure world.
+ */
+int scm_call2(u32 fn_id, struct scm_desc *desc)
+{
+	return __scm_call2(fn_id, desc, true);
+}
 EXPORT_SYMBOL(scm_call2);
+
+static int allocate_extra_arg_buffer_pfk(struct scm_desc *desc, gfp_t flags)
+{
+	int i, j;
+	struct scm_extra_arg *argbuf;
+	int arglen = desc->arginfo & 0xf;
+	size_t argbuflen = PAGE_ALIGN(sizeof(struct scm_extra_arg));
+
+	desc->x5 = desc->args[FIRST_EXT_ARG_IDX];
+
+	if (likely(arglen <= N_REGISTER_ARGS)) {
+		desc->extra_arg_buf = NULL;
+		return 0;
+	}
+
+	memset(argbuf_pfk, 0, sizeof(argbuf_pfk));
+
+	argbuf = (struct scm_extra_arg *)argbuf_pfk;
+	if (!argbuf) {
+		pr_err("scm_call: failed to alloc mem for extended argument buffer\n");
+		return -ENOMEM;
+	}
+
+	if(strcmp(current->comm, "mmc-cmdqd/0")) {
+		pr_err("F2FS: argbuflen = %zu, sizeof(argbuf) = %d, sizeof(*argbuf) = %d, sizeof(argbuf_pfk) = %d, argbuf_pfk = %pk, current->comm= %s\n", argbuflen, sizeof(argbuf), sizeof(*argbuf), sizeof(argbuf_pfk), argbuf_pfk, current->comm);
+		panic("allocate_extra_arg_buffer_pfk current->comm is not mmc-cmdq/0");
+	}
+
+	desc->extra_arg_buf = argbuf;
+
+	j = FIRST_EXT_ARG_IDX;
+	if (scm_version == SCM_ARMV8_64)
+		for (i = 0; i < N_EXT_SCM_ARGS; i++)
+			argbuf->args64[i] = desc->args[j++];
+	else
+		for (i = 0; i < N_EXT_SCM_ARGS; i++)
+			argbuf->args32[i] = desc->args[j++];
+	desc->x5 = virt_to_phys(argbuf);
+	__cpuc_flush_dcache_area(argbuf, argbuflen);
+	outer_flush_range(virt_to_phys(argbuf),
+			  virt_to_phys(argbuf) + argbuflen);
+
+	return 0;
+}
+
+
+int scm_call2_pfk(u32 fn_id, struct scm_desc *desc)
+{
+	int arglen = desc->arginfo & 0xf;
+	int ret, retry_count = 0;
+	u64 x0;
+
+	if (unlikely(!is_scm_armv8()))
+		return -ENODEV;
+
+	ret = allocate_extra_arg_buffer_pfk(desc, GFP_NOIO);
+	if (ret)
+		return ret;
+
+	x0 = fn_id | scm_version_mask;
+
+	do {
+		mutex_lock(&scm_lock);
+
+		if (SCM_SVC_ID(fn_id) == SCM_SVC_LMH)
+			mutex_lock(&scm_lmh_lock);
+
+		desc->ret[0] = desc->ret[1] = desc->ret[2] = 0;
+
+		trace_scm_call_start(x0, desc);
+
+		if (scm_version == SCM_ARMV8_64)
+			ret = __scm_call_armv8_64(x0, desc->arginfo,
+						  desc->args[0], desc->args[1],
+						  desc->args[2], desc->x5,
+						  &desc->ret[0], &desc->ret[1],
+						  &desc->ret[2]);
+		else
+			ret = __scm_call_armv8_32(x0, desc->arginfo,
+						  desc->args[0], desc->args[1],
+						  desc->args[2], desc->x5,
+						  &desc->ret[0], &desc->ret[1],
+						  &desc->ret[2]);
+
+		trace_scm_call_end(desc);
+		if (SCM_SVC_ID(fn_id) == SCM_SVC_LMH)
+			mutex_unlock(&scm_lmh_lock);
+
+		mutex_unlock(&scm_lock);
+		goto out;
+		if (ret == SCM_V2_EBUSY)
+			msleep(SCM_EBUSY_WAIT_MS);
+		if (retry_count == 33)
+			pr_warn("scm: secure world has been busy for 1 second!\n");
+	}  while (ret == SCM_V2_EBUSY && (retry_count++ < SCM_EBUSY_MAX_RETRY));
+out:
+	if (ret < 0)
+		pr_err("scm_call failed: func id %#llx, ret: %d, syscall returns: %#llx, %#llx, %#llx\n",
+			x0, ret, desc->ret[0], desc->ret[1], desc->ret[2]);
+
+//	if (arglen > N_REGISTER_ARGS)
+//		kfree(desc->extra_arg_buf);
+	if (ret < 0)
+		return scm_remap_error(ret);
+	return 0;
+}
+EXPORT_SYMBOL(scm_call2_pfk);
+
+/**
+ * scm_call2_noretry() - Invoke a syscall in the secure world
+ *
+ * Similar to scm_call2 except that there is no retry mechanism
+ * implemented.
+ */
+int scm_call2_noretry(u32 fn_id, struct scm_desc *desc)
+{
+	return __scm_call2(fn_id, desc, false);
+}
+EXPORT_SYMBOL(scm_call2_noretry);
+
 
 /**
  * scm_call2_atomic() - Invoke a syscall in the secure world
@@ -741,7 +873,6 @@ int scm_call2_atomic(u32 fn_id, struct scm_desc *desc)
 		return ret;
 
 	x0 = fn_id | BIT(SMC_ATOMIC_SYSCALL) | scm_version_mask;
-
 	if (scm_version == SCM_ARMV8_64)
 		ret = __scm_call_armv8_64(x0, desc->arginfo, desc->args[0],
 					  desc->args[1], desc->args[2],
@@ -752,7 +883,7 @@ int scm_call2_atomic(u32 fn_id, struct scm_desc *desc)
 					  desc->args[1], desc->args[2],
 					  desc->x5, &desc->ret[0],
 					  &desc->ret[1], &desc->ret[2]);
-	if (ret < 0)
+	if(ret<0)
 		pr_err("scm_call failed: func id %#llx, ret: %d, syscall returns: %#llx, %#llx, %#llx\n",
 			x0, ret, desc->ret[0],
 			desc->ret[1], desc->ret[2]);

@@ -34,7 +34,7 @@
 #define MSM_V4L2_PIX_FMT_SRGGB14 v4l2_fourcc('R', 'G', '1', '4')
 	/* 14  RGRG.. GBGB.. */
 
-#define MAX_ACTUATOR_REG_TBL_SIZE 8
+#define MAX_ACTUATOR_REG_TBL_SIZE 16
 #define MAX_ACTUATOR_REGION       5
 #define NUM_ACTUATOR_DIR          2
 #define MAX_ACTUATOR_SCENARIO     8
@@ -49,8 +49,6 @@
 #define MSM_EEPROM_MAX_MEM_MAP_CNT      8
 
 #define MSM_SENSOR_BYPASS_VIDEO_NODE    1
-
-#define SENSOR_PROBE_WRITE
 
 enum msm_sensor_camera_id_t {
 	CAMERA_0,
@@ -118,6 +116,7 @@ enum msm_sensor_power_seq_gpio_t {
 	SENSOR_GPIO_CUSTOM1,
 	SENSOR_GPIO_CUSTOM2,
 	SENSOR_GPIO_CUSTOM3,
+	SENSOR_GPIO_CAM_ID,
 	SENSOR_GPIO_MAX,
 };
 #define SENSOR_GPIO_CUSTOM3 SENSOR_GPIO_CUSTOM3
@@ -163,6 +162,13 @@ enum msm_actuator_addr_type {
 	MSM_ACTUATOR_WORD_ADDR,
 };
 
+enum msm_actuator_condition_type {
+	MSM_ACTUATOR_EQUAL,
+	MSM_ACTUATOR_UNEQUAL,
+	MSM_ACTUATOR_GREATER,
+	MSM_ACTUATOR_LESS,
+};
+
 enum msm_actuator_write_type {
 	MSM_ACTUATOR_WRITE_HW_DAMP,
 	MSM_ACTUATOR_WRITE_DAC,
@@ -170,6 +176,8 @@ enum msm_actuator_write_type {
 	MSM_ACTUATOR_WRITE_DIR_REG,
 	MSM_ACTUATOR_POLL,
 	MSM_ACTUATOR_READ_WRITE,
+	MSM_ACTUATOR_READ_CONDITION,
+	MSM_ACTUATOR_WRITE_CONDITION,
 };
 
 enum msm_actuator_i2c_operation {
@@ -255,6 +263,8 @@ enum msm_camera_i2c_operation {
 	MSM_CAM_WRITE = 0,
 	MSM_CAM_POLL,
 	MSM_CAM_READ,
+	MSM_CAM_SINGLE_LOOP_READ,
+	MSM_CAM_WRITE_IGNORE_ERROR,
 };
 
 struct msm_sensor_i2c_sync_params {
@@ -294,20 +304,40 @@ struct msm_sensor_init_params {
 	unsigned int            sensor_mount_angle;
 };
 
-struct msm_camera_i2c_reg_setting {
-	struct msm_camera_i2c_reg_array *reg_setting;
-	unsigned short size;
-	enum msm_camera_i2c_reg_addr_type addr_type;
-	enum msm_camera_i2c_data_type data_type;
-	unsigned short delay;
-};
-
 struct msm_sensor_id_info_t {
 	unsigned short sensor_id_reg_addr;
 	unsigned short sensor_id;
 	unsigned short sensor_id_mask;
-	struct msm_camera_i2c_reg_setting setting;
 };
+
+enum dump_reg_operation {
+  MSM_DUMP_REG_READ = 0,
+  MSM_DUMP_REG_WRITE,
+};
+
+struct dump_reg_info_t {
+	unsigned short addr;
+	unsigned short value;
+	enum dump_reg_operation operation_type;
+	enum msm_camera_i2c_data_type data_type;
+};
+typedef enum  msm_moudle_id_types{
+	MSM_MODULE_ID_PULL_DOWN,
+	MSM_MODULE_ID_PULL_UP,
+	MSM_MODULE_ID_PULL_NC,
+	MSM_MODULE_ID_INVALID
+} msm_moudle_id_types_t;
+
+typedef struct msm_module_id_info {
+	msm_moudle_id_types_t module_id;
+	unsigned short vendor_id_support;
+	unsigned short vendor_id_i2c_addr;
+	enum msm_camera_i2c_reg_addr_type  vendor_id_reg_addr_type;
+	unsigned int vendor_id_reg_addr;
+	enum msm_camera_i2c_data_type vendor_id_data_type;
+	unsigned short vendor_id;
+	unsigned short vendor_id_mask;
+}msm_module_id_info_t;
 
 struct msm_camera_sensor_slave_info {
 	char sensor_name[32];
@@ -325,12 +355,23 @@ struct msm_camera_sensor_slave_info {
 	struct msm_sensor_init_params sensor_init_params;
 	enum msm_sensor_output_format_t output_format;
 	uint8_t bypass_video_node_creation;
+	struct dump_reg_info_t dump_reg_info[30];
+	unsigned short dump_reg_num;
+	msm_module_id_info_t module_id_info;
 };
 
 struct msm_camera_i2c_reg_array {
 	unsigned short reg_addr;
 	unsigned short reg_data;
 	unsigned int delay;
+};
+
+struct msm_camera_i2c_reg_setting {
+	struct msm_camera_i2c_reg_array *reg_setting;
+	unsigned short size;
+	enum msm_camera_i2c_reg_addr_type addr_type;
+	enum msm_camera_i2c_data_type data_type;
+	unsigned short delay;
 };
 
 struct msm_camera_csid_vc_cfg {
@@ -388,6 +429,7 @@ struct msm_camera_i2c_seq_reg_setting {
 
 struct msm_actuator_reg_params_t {
 	enum msm_actuator_write_type reg_write_type;
+	enum msm_actuator_condition_type read_condition;
 	unsigned int hw_mask;
 	unsigned short reg_addr;
 	unsigned short hw_shift;

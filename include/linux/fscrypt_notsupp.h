@@ -3,15 +3,12 @@
  *
  * This stubs out the fscrypt functions for filesystems configured without
  * encryption support.
- *
- * Do not include this file directly. Use fscrypt.h instead!
  */
-#ifndef _LINUX_FSCRYPT_H
-#error "Incorrect include of linux/fscrypt_notsupp.h!"
-#endif
 
 #ifndef _LINUX_FSCRYPT_NOTSUPP_H
 #define _LINUX_FSCRYPT_NOTSUPP_H
+
+#include <linux/fscrypt_common.h>
 
 /* crypto.c */
 static inline struct fscrypt_ctx *fscrypt_get_ctx(const struct inode *inode,
@@ -58,6 +55,21 @@ static inline void fscrypt_set_encrypted_dentry(struct dentry *dentry)
 	return;
 }
 
+static inline struct page *fscrypt_encrypt_dio_page(struct inode *inode,
+				      struct page *plaintext_page,
+				      unsigned int len,
+				      unsigned int offs,
+				      u64 lblk_num, gfp_t gfp_flags)
+{
+	return ERR_PTR(-EOPNOTSUPP);
+}
+
+static inline int fscrypt_decrypt_dio_page(struct inode *inode, struct page *page,
+			unsigned int len, unsigned int offs, u64 lblk_num)
+{
+	return -EOPNOTSUPP;
+}
+
 /* policy.c */
 static inline int fscrypt_ioctl_set_policy(struct file *filp,
 					   const void __user *arg)
@@ -95,12 +107,17 @@ static inline void fscrypt_put_encryption_info(struct inode *inode,
 	return;
 }
 
+static inline int fs_using_hardware_encryption(struct inode *inode)
+{
+	return -EOPNOTSUPP;
+}
+
  /* fname.c */
 static inline int fscrypt_setup_filename(struct inode *dir,
 					 const struct qstr *iname,
 					 int lookup, struct fscrypt_name *fname)
 {
-	if (IS_ENCRYPTED(dir))
+	if (dir->i_sb->s_cop->is_encrypted(dir))
 		return -EOPNOTSUPP;
 
 	memset(fname, 0, sizeof(struct fscrypt_name));
@@ -166,6 +183,12 @@ static inline void fscrypt_decrypt_bio_pages(struct fscrypt_ctx *ctx,
 	return;
 }
 
+static inline void fscrypt_decrypt_dio_bio_pages(struct fscrypt_ctx *ctx, struct bio *bio,
+				   work_func_t func)
+{
+	return;
+}
+
 static inline void fscrypt_pullback_bio_page(struct page **page, bool restore)
 {
 	return;
@@ -173,36 +196,6 @@ static inline void fscrypt_pullback_bio_page(struct page **page, bool restore)
 
 static inline int fscrypt_zeroout_range(const struct inode *inode, pgoff_t lblk,
 					sector_t pblk, unsigned int len)
-{
-	return -EOPNOTSUPP;
-}
-
-/* hooks.c */
-
-static inline int fscrypt_file_open(struct inode *inode, struct file *filp)
-{
-	if (IS_ENCRYPTED(inode))
-		return -EOPNOTSUPP;
-	return 0;
-}
-
-static inline int __fscrypt_prepare_link(struct inode *inode,
-					 struct inode *dir)
-{
-	return -EOPNOTSUPP;
-}
-
-static inline int __fscrypt_prepare_rename(struct inode *old_dir,
-					   struct dentry *old_dentry,
-					   struct inode *new_dir,
-					   struct dentry *new_dentry,
-					   unsigned int flags)
-{
-	return -EOPNOTSUPP;
-}
-
-static inline int __fscrypt_prepare_lookup(struct inode *dir,
-					   struct dentry *dentry)
 {
 	return -EOPNOTSUPP;
 }

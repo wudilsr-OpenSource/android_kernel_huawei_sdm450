@@ -53,7 +53,6 @@ struct led_setting {
 	u32			off_ms;
 	enum led_brightness	brightness;
 	bool			blink;
-	bool			breath;
 };
 
 struct qpnp_led_dev {
@@ -65,9 +64,9 @@ struct qpnp_led_dev {
 	struct mutex		lock;
 	const char		*label;
 	const char		*default_trigger;
+	int				led_cust_brightness;
 	u8			id;
 	bool			blinking;
-	bool			breathing;
 };
 
 struct qpnp_tri_led_chip {
@@ -121,10 +120,6 @@ static int __tri_led_config_pwm(struct qpnp_led_dev *led,
 	pstate.enabled = !!(pwm->duty_ns != 0);
 	pstate.period = pwm->period_ns;
 	pstate.duty_cycle = pwm->duty_ns;
-	pstate.output_type = led->led_setting.breath ?
-		PWM_OUTPUT_MODULATED : PWM_OUTPUT_FIXED;
-	/* Use default pattern in PWM device */
-	pstate.output_pattern = NULL;
 	rc = pwm_apply_state(led->pwm_dev, &pstate);
 
 	if (rc < 0)
@@ -189,9 +184,7 @@ static int qpnp_tri_led_set(struct qpnp_led_dev *led)
 		/* Use initial period if no blinking is required */
 		period_ns = led->pwm_setting.pre_period_ns;
 
-		if (brightness == LED_OFF)
-			duty_ns = 0;
-		else if (period_ns > INT_MAX / brightness)
+		if (period_ns > INT_MAX / brightness)
 			duty_ns = (period_ns / LED_FULL) * brightness;
 		else
 			duty_ns = (period_ns * brightness) / LED_FULL;
@@ -213,17 +206,11 @@ static int qpnp_tri_led_set(struct qpnp_led_dev *led)
 	}
 
 	if (led->led_setting.blink) {
-		led->cdev.brightness = LED_FULL;
+		led->cdev.brightness = led->led_cust_brightness;
 		led->blinking = true;
-		led->breathing = false;
-	} else if (led->led_setting.breath) {
-		led->cdev.brightness = LED_FULL;
-		led->blinking = false;
-		led->breathing = true;
 	} else {
 		led->cdev.brightness = led->led_setting.brightness;
 		led->blinking = false;
-		led->breathing = false;
 	}
 
 	return rc;
@@ -241,7 +228,7 @@ static int qpnp_tri_led_set_brightness(struct led_classdev *led_cdev,
 		brightness = LED_FULL;
 
 	if (brightness == led->led_setting.brightness &&
-			!led->blinking && !led->breathing) {
+				!led->blinking) {
 		mutex_unlock(&led->lock);
 		return 0;
 	}
@@ -252,7 +239,6 @@ static int qpnp_tri_led_set_brightness(struct led_classdev *led_cdev,
 	else
 		led->led_setting.on_ms = 0;
 	led->led_setting.blink = false;
-	led->led_setting.breath = false;
 
 	rc = qpnp_tri_led_set(led);
 	if (rc)
@@ -288,17 +274,14 @@ static int qpnp_tri_led_set_blink(struct led_classdev *led_cdev,
 
 	if (*on_ms == 0) {
 		led->led_setting.blink = false;
-		led->led_setting.breath = false;
 		led->led_setting.brightness = LED_OFF;
 	} else if (*off_ms == 0) {
 		led->led_setting.blink = false;
-		led->led_setting.breath = false;
 		led->led_setting.brightness = led->cdev.brightness;
 	} else {
 		led->led_setting.on_ms = *on_ms;
 		led->led_setting.off_ms = *off_ms;
 		led->led_setting.blink = true;
-		led->led_setting.breath = false;
 	}
 
 	rc = qpnp_tri_led_set(led);
@@ -310,52 +293,6 @@ static int qpnp_tri_led_set_blink(struct led_classdev *led_cdev,
 	return rc;
 }
 
-static ssize_t breath_show(struct device *dev, struct device_attribute *attr,
-							char *buf)
-{
-	struct led_classdev *led_cdev = dev_get_drvdata(dev);
-	struct qpnp_led_dev *led =
-		container_of(led_cdev, struct qpnp_led_dev, cdev);
-
-	return snprintf(buf, PAGE_SIZE, "%d\n", led->led_setting.breath);
-}
-
-static ssize_t breath_store(struct device *dev, struct device_attribute *attr,
-						const char *buf, size_t count)
-{
-	int rc;
-	bool breath;
-	struct led_classdev *led_cdev = dev_get_drvdata(dev);
-	struct qpnp_led_dev *led =
-		container_of(led_cdev, struct qpnp_led_dev, cdev);
-
-	rc = kstrtobool(buf, &breath);
-	if (rc < 0)
-		return rc;
-
-	mutex_lock(&led->lock);
-	if (led->breathing == breath)
-		goto unlock;
-
-	led->led_setting.blink = false;
-	led->led_setting.breath = breath;
-	led->led_setting.brightness = breath ? LED_FULL : LED_OFF;
-	rc = qpnp_tri_led_set(led);
-	if (rc < 0)
-		dev_err(led->chip->dev, "Set led failed for %s, rc=%d\n",
-				led->label, rc);
-
-unlock:
-	mutex_unlock(&led->lock);
-	return (rc < 0) ? rc : count;
-}
-
-static DEVICE_ATTR(breath, 0644, breath_show, breath_store);
-static const struct attribute *breath_attrs[] = {
-	&dev_attr_breath.attr,
-	NULL
-};
-
 static int qpnp_tri_led_register(struct qpnp_tri_led_chip *chip)
 {
 	struct qpnp_led_dev *led;
@@ -365,7 +302,7 @@ static int qpnp_tri_led_register(struct qpnp_tri_led_chip *chip)
 		led = &chip->leds[i];
 		mutex_init(&led->lock);
 		led->cdev.name = led->label;
-		led->cdev.max_brightness = LED_FULL;
+		led->cdev.max_brightness = led->led_cust_brightness;
 		led->cdev.brightness_set_blocking = qpnp_tri_led_set_brightness;
 		led->cdev.brightness_get = qpnp_tri_led_get_brightness;
 		led->cdev.blink_set = qpnp_tri_led_set_blink;
@@ -377,30 +314,15 @@ static int qpnp_tri_led_register(struct qpnp_tri_led_chip *chip)
 		if (rc < 0) {
 			dev_err(chip->dev, "%s led class device registering failed, rc=%d\n",
 							led->label, rc);
-			goto err_out;
-		}
-
-		if (pwm_get_output_type_supported(led->pwm_dev)
-				& PWM_OUTPUT_MODULATED) {
-			rc = sysfs_create_files(&led->cdev.dev->kobj,
-					breath_attrs);
-			if (rc < 0) {
-				dev_err(chip->dev, "Create breath file for %s led failed, rc=%d\n",
-						led->label, rc);
-				goto err_out;
-			}
+			goto destroy;
 		}
 	}
 
 	return 0;
+destroy:
+	for (j = 0; j <= i; j++)
+		mutex_destroy(&chip->leds[i].lock);
 
-err_out:
-	for (j = 0; j <= i; j++) {
-		if (j < i)
-			sysfs_remove_files(&chip->leds[j].cdev.dev->kobj,
-					breath_attrs);
-		mutex_destroy(&chip->leds[j].lock);
-	}
 	return rc;
 }
 
@@ -483,6 +405,14 @@ static int qpnp_tri_led_parse_dt(struct qpnp_tri_led_chip *chip)
 		led->label =
 			of_get_property(child_node, "label", NULL) ? :
 							child_node->name;
+		rc = of_property_read_u32(child_node, "qcom,max-brightness",
+			&led->led_cust_brightness);
+		if (rc) {
+			dev_err(chip->dev,
+				"Failure reading led_cust_brightness, rc = %d\n", rc);
+			led->led_cust_brightness = LED_FULL;
+			rc = 0; // not fail
+		}
 
 		led->pwm_dev =
 			devm_of_pwm_get(chip->dev, child_node, NULL);
@@ -562,10 +492,8 @@ static int qpnp_tri_led_remove(struct platform_device *pdev)
 	struct qpnp_tri_led_chip *chip = dev_get_drvdata(&pdev->dev);
 
 	mutex_destroy(&chip->bus_lock);
-	for (i = 0; i < chip->num_leds; i++) {
-		sysfs_remove_files(&chip->leds[i].cdev.dev->kobj, breath_attrs);
+	for (i = 0; i < chip->num_leds; i++)
 		mutex_destroy(&chip->leds[i].lock);
-	}
 	dev_set_drvdata(chip->dev, NULL);
 	return 0;
 }

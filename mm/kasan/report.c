@@ -350,6 +350,7 @@ static void kasan_report_error(struct kasan_access_info *info)
 	}
 
 	kasan_end_report(&flags);
+	panic("Trigger panic to get the kasan corruption message");
 }
 
 void kasan_report(unsigned long addr, size_t size,

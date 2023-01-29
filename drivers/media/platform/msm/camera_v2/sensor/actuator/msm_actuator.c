@@ -16,6 +16,9 @@
 #include "msm_sd.h"
 #include "msm_actuator.h"
 #include "msm_cci.h"
+#ifdef CONFIG_HUAWEI_DSM
+#include "msm_camera_dsm.h"
+#endif
 
 DEFINE_MSM_MUTEX(msm_actuator_mutex);
 
@@ -92,8 +95,10 @@ static void msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 	struct msm_actuator_reg_params_t *write_arr = NULL;
 	uint32_t hw_dword = hw_params;
 	uint16_t i2c_byte1 = 0, i2c_byte2 = 0;
-	uint16_t value = 0;
+	uint16_t value = 0, reg_data = 0;
 	uint32_t size = 0, i = 0;
+	int32_t rc = 0;
+	bool condition = false;
 	struct msm_camera_i2c_reg_array *i2c_tbl = NULL;
 
 	CDBG("Enter\n");
@@ -146,6 +151,56 @@ static void msm_actuator_parse_i2c_params(struct msm_actuator_ctrl_t *a_ctrl,
 				i2c_byte1 = (value & 0xFF00) >> 8;
 				i2c_byte2 = value & 0xFF;
 			}
+		} else if(write_arr[i].reg_write_type == MSM_ACTUATOR_WRITE) {
+			i2c_byte1 = write_arr[i].reg_addr;
+			i2c_byte2 = write_arr[i].reg_data;
+		} else if(write_arr[i].reg_write_type == MSM_ACTUATOR_READ_CONDITION) {
+			rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(&a_ctrl->i2c_client, write_arr[i].reg_addr,
+				 &reg_data, write_arr[i].data_type);
+			if (rc < 0) {
+				pr_err("i2c read error:%d\n", rc);
+				continue;
+			}
+			CDBG("read reg_addr:0x%x, reg_data:0x%x", write_arr[i].reg_addr, reg_data);
+			switch (write_arr[i].read_condition) {
+			case MSM_ACTUATOR_EQUAL:
+				if (reg_data == write_arr[i].reg_data) {
+					condition = true;
+				}
+				break;
+			case MSM_ACTUATOR_UNEQUAL:
+				if (reg_data != write_arr[i].reg_data) {
+					condition = true;
+				}
+				break;
+			case MSM_ACTUATOR_GREATER:
+				if (reg_data > write_arr[i].reg_data) {
+					condition = true;
+				}
+				break;
+			case MSM_ACTUATOR_LESS:
+				if (reg_data < write_arr[i].reg_data) {
+					condition = true;
+				}
+				break;
+			default :
+				break;
+			}
+			continue;
+		} else if(write_arr[i].reg_write_type == MSM_ACTUATOR_WRITE_CONDITION) {
+			if (condition) {
+				rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(&a_ctrl->i2c_client, write_arr[i].reg_addr,
+					write_arr[i].reg_data, write_arr[i].data_type);
+				if (rc < 0) {
+					pr_err("i2c write error:%d\n", rc);
+					continue;
+				}
+				CDBG("write reg_addr:0x%x, reg_data:0x%x", write_arr[i].reg_addr, write_arr[i].reg_data);
+				if (write_arr[i].delay) {
+					usleep_range(write_arr[i].delay, write_arr[i].delay + 1000);
+				}
+			}
+			continue;
 		} else {
 			i2c_byte1 = write_arr[i].reg_addr;
 			i2c_byte2 = (hw_dword & write_arr[i].hw_mask) >>
@@ -1439,6 +1494,63 @@ static int msm_actuator_init(struct msm_actuator_ctrl_t *a_ctrl)
 	return rc;
 }
 
+#ifdef CONFIG_HUAWEI_DSM
+static char camera_actuator_dsm_log_buff[MSM_CAMERA_DSM_BUFFER_SIZE] = {0};
+void camera_report_actuator_dsm_err(struct msm_actuator_ctrl_t *a_ctrl, struct msm_actuator_cfg_data *cfg_data, int type, int err_num)
+{
+	ssize_t len = 0;
+
+	if(a_ctrl == NULL || cfg_data == NULL)
+	{
+		pr_err("%s: NULL pointer!!\n", __func__);
+		return;
+	}
+
+	memset(camera_actuator_dsm_log_buff, 0, MSM_CAMERA_DSM_BUFFER_SIZE);
+
+	/* camera record error info according to err type */
+	switch(type)
+	{
+		case DSM_CAMERA_ACTUATOR_INIT_FAIL:
+			/* report actuator init fail */
+			len += snprintf(camera_actuator_dsm_log_buff+len, MSM_CAMERA_DSM_BUFFER_SIZE-len, "[msm_camera]actuator init fail.\n");
+			len += snprintf(camera_actuator_dsm_log_buff+len, MSM_CAMERA_DSM_BUFFER_SIZE-len,
+			                "actuator power: %d\n", a_ctrl->actuator_state);
+			break;
+
+		case DSM_CAMERA_ACTUATOR_SET_INFO_ERR:
+			/* report actuator set param fail */
+			len += snprintf(camera_actuator_dsm_log_buff+len, MSM_CAMERA_DSM_BUFFER_SIZE-len, "[msm_camera]actuator set param fail.\n");
+			len += snprintf(camera_actuator_dsm_log_buff+len, MSM_CAMERA_DSM_BUFFER_SIZE-len,
+			        "region size:%d  pwd step:%d  total steps:%d  reg_tbl size:%d  initial code:%d  actuator power: %d\n",
+			        a_ctrl->region_size, a_ctrl->pwd_step, a_ctrl->total_steps, a_ctrl->reg_tbl_size, a_ctrl->initial_code, a_ctrl->actuator_state);
+			break;
+
+		case DSM_CAMERA_ACTUATOR_MOVE_FAIL:
+			/* report move actuator fail */
+			len += snprintf(camera_actuator_dsm_log_buff+len, MSM_CAMERA_DSM_BUFFER_SIZE-len, "[msm_camera]move actuator fail.\n");
+			len += snprintf(camera_actuator_dsm_log_buff+len, MSM_CAMERA_DSM_BUFFER_SIZE-len,
+			        "total_steps:%d  dest_step_pos:%d  curr_lens_pos:%d  i2c_tbl_index:%d  actuator power: %d\n",
+			        a_ctrl->total_steps, (cfg_data->cfg.move).dest_step_pos, a_ctrl->step_position_table[a_ctrl->curr_step_pos], a_ctrl->i2c_tbl_index, a_ctrl->actuator_state);
+			break;
+
+		default:
+			break;
+	}
+
+	if ( len >= MSM_CAMERA_DSM_BUFFER_SIZE -1 )
+	{
+		pr_err("write camera_actuator_dsm_log_buff overflow.\n");
+		return;
+	}
+	if ( 0 > camera_report_dsm_err(type, err_num, camera_actuator_dsm_log_buff) )
+	{
+		pr_err("report dsm err fail.\n");
+	}
+    return;
+}
+#endif
+
 static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 	void *argp)
 {
@@ -1462,7 +1574,12 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 	case CFG_ACTUATOR_INIT:
 		rc = msm_actuator_init(a_ctrl);
 		if (rc < 0)
+		{
 			pr_err("msm_actuator_init failed %d\n", rc);
+#ifdef CONFIG_HUAWEI_DSM
+			camera_report_actuator_dsm_err(a_ctrl, NULL, DSM_CAMERA_ACTUATOR_INIT_FAIL, rc);
+#endif
+		}
 		break;
 	case CFG_GET_ACTUATOR_INFO:
 		cdata->is_af_supported = 1;
@@ -1473,7 +1590,12 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 	case CFG_SET_ACTUATOR_INFO:
 		rc = msm_actuator_set_param(a_ctrl, &cdata->cfg.set_info);
 		if (rc < 0)
+		{
 			pr_err("init table failed %d\n", rc);
+#ifdef CONFIG_HUAWEI_DSM
+			camera_report_actuator_dsm_err(a_ctrl, NULL, DSM_CAMERA_ACTUATOR_SET_INFO_ERR, rc);
+#endif
+		}
 		break;
 
 	case CFG_SET_DEFAULT_FOCUS:
@@ -1491,7 +1613,16 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 			rc = a_ctrl->func_tbl->actuator_move_focus(a_ctrl,
 				&cdata->cfg.move);
 		if (rc < 0)
+		{
 			pr_err("move focus failed %d\n", rc);
+#ifdef CONFIG_HUAWEI_DSM
+			if (!camera_is_closing)
+			{
+				camera_report_actuator_dsm_err(a_ctrl, cdata, DSM_CAMERA_ACTUATOR_MOVE_FAIL, rc);
+			}
+#endif
+		}
+
 		break;
 	case CFG_ACTUATOR_POWERDOWN:
 		rc = msm_actuator_power_down(a_ctrl);

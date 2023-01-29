@@ -77,7 +77,7 @@ struct rb_node **__lookup_rb_tree_for_insert(struct f2fs_sb_info *sbi,
 		else if (ofs >= re->ofs + re->len)
 			p = &(*p)->rb_right;
 		else
-			f2fs_bug_on(sbi, 1);
+			f2fs_bug_on_atomic(sbi, 1);
 	}
 
 	return p;
@@ -237,7 +237,7 @@ static void __release_extent_node(struct f2fs_sb_info *sbi,
 			struct extent_tree *et, struct extent_node *en)
 {
 	spin_lock(&sbi->extent_lock);
-	f2fs_bug_on(sbi, list_empty(&en->list));
+	f2fs_bug_on_atomic(sbi, list_empty(&en->list));
 	list_del_init(&en->list);
 	spin_unlock(&sbi->extent_lock);
 
@@ -537,7 +537,7 @@ static void f2fs_update_extent_tree_range(struct inode *inode,
 
 		dei = en->ei;
 		org_end = dei.fofs + dei.len;
-		f2fs_bug_on(sbi, pos >= org_end);
+		f2fs_bug_on_atomic(sbi, pos >= org_end);
 
 		if (pos > dei.fofs &&	pos - dei.fofs >= F2FS_MIN_EXTENT_LEN) {
 			en->ei.len = pos - en->ei.fofs;
@@ -607,6 +607,9 @@ static void f2fs_update_extent_tree_range(struct inode *inode,
 		__free_extent_tree(sbi, et);
 
 	write_unlock(&et->lock);
+
+	if (is_sbi_flag_set(sbi, SBI_NEED_FSCK))
+		set_extra_flag(sbi, EXTRA_NEED_FSCK_FLAG);
 }
 
 unsigned int f2fs_shrink_extent_tree(struct f2fs_sb_info *sbi, int nr_shrink)

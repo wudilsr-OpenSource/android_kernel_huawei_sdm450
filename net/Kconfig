@@ -86,6 +86,8 @@ if INET
 source "net/ipv4/Kconfig"
 source "net/ipv6/Kconfig"
 source "net/netlabel/Kconfig"
+source "net/network_aware/Kconfig"
+source "net/hw_dpi_mark/Kconfig"
 
 endif # if INET
 
@@ -435,6 +437,7 @@ config MAY_USE_DEVLINK
 	  devlink is a loadable module and the driver using it is built-in.
 
 source "net/ipc_router/Kconfig"
+source "net/chr/Kconfig"
 
 endif   # if NET
 

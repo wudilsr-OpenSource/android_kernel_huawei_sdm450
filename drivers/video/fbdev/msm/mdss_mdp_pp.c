@@ -2446,7 +2446,6 @@ static int pp_dspp_setup(u32 disp_num, struct mdss_mdp_mixer *mixer)
 
 	if (flags & PP_FLAGS_DIRTY_DITHER) {
 		if (!pp_ops[DITHER].pp_set_config) {
-			addr = base + MDSS_MDP_REG_DSPP_DITHER_DEPTH;
 			pp_dither_config(addr, pp_sts,
 				&mdss_pp_res->dither_disp_cfg[disp_num]);
 		} else {
@@ -5157,7 +5156,7 @@ static int pp_hist_collect(struct mdp_histogram_data *hist,
 				u32 block)
 {
 	int ret = 0;
-	int sum = 0;
+	u32 sum;
 	char __iomem *v_base = NULL;
 	unsigned long flag;
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
@@ -5187,12 +5186,7 @@ static int pp_hist_collect(struct mdp_histogram_data *hist,
 		else if (block == SSPP_VIG)
 			v_base = ctl_base +
 				MDSS_MDP_REG_VIG_HIST_CTL_BASE;
-		if (!v_base) {
-			pr_err("Invalid address to get the hist data\n");
-			sum = 0;
-		} else {
-			sum = pp_hist_read(v_base, hist_info);
-		}
+		sum = pp_hist_read(v_base, hist_info);
 	}
 	writel_relaxed(0, hist_info->base);
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);

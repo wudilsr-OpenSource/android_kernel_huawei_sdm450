@@ -140,6 +140,8 @@ struct qusb_phy {
 	int			init_seq_len;
 	int			*qusb_phy_init_seq;
 	u32			major_rev;
+	int			host_init_seq_len;
+	int			*qusb_phy_host_init_seq;
 
 	u32			tune2_val;
 	int			tune2_efuse_bit_pos;
@@ -168,6 +170,7 @@ struct qusb_phy {
 	int			emu_dcm_reset_seq_len;
 	bool			put_into_high_z_state;
 	struct mutex		phy_lock;
+	bool 		use_host_flag;
 };
 
 static void qusb_phy_enable_clocks(struct qusb_phy *qphy, bool on)
@@ -433,6 +436,7 @@ static int qusb_phy_init(struct usb_phy *phy)
 	struct qusb_phy *qphy = container_of(phy, struct qusb_phy, phy);
 	int ret, reset_val = 0;
 	u8 reg;
+	u8 final_tune2_val;
 	bool pll_lock_fail = false;
 
 	dev_dbg(phy->dev, "%s\n", __func__);
@@ -514,6 +518,19 @@ static int qusb_phy_init(struct usb_phy *phy)
 		qusb_phy_write_seq(qphy->base, qphy->qusb_phy_init_seq,
 				qphy->init_seq_len, 0);
 
+	if(qphy->use_host_flag)
+	{
+		if(qphy->phy.flags & PHY_HOST_MODE)
+		{
+			pr_err("Enter:%s qphy->phy.flags = %d\n",__func__,qphy->phy.flags);
+			if (qphy->qusb_phy_host_init_seq)
+			{
+					qusb_phy_write_seq(qphy->base, qphy->qusb_phy_host_init_seq,
+						qphy->init_seq_len, 0);
+			}
+		}
+	}
+
 	/*
 	 * Check for EFUSE value only if tune2_efuse_reg is available
 	 * and try to read EFUSE value only once i.e. not every USB
@@ -556,6 +573,9 @@ static int qusb_phy_init(struct usb_phy *phy)
 	/* ensure above writes are completed before re-enabling PHY */
 	wmb();
 
+	final_tune2_val = readb_relaxed(qphy->base + QUSB2PHY_PORT_TUNE2);
+	pr_info("%s(): Programming final TUNE2 parameter as:%x\n", __func__,
+				final_tune2_val);
 	/* Enable the PHY */
 	if (qphy->major_rev < 2)
 		writel_relaxed(CLAMP_N_EN | FREEZIO_N,
@@ -1146,6 +1166,32 @@ static int qusb_phy_probe(struct platform_device *pdev)
 				qphy->init_seq_len);
 		} else {
 			dev_err(dev, "error allocating memory for phy_init_seq\n");
+		}
+	}
+
+	qphy->use_host_flag = false;
+	size = 0;
+	of_get_property(dev->of_node, "qcom,qusb-phy-host-init-seq", &size);
+	if (size) {
+		qphy->qusb_phy_host_init_seq = devm_kzalloc(dev,
+						size, GFP_KERNEL);
+		if (qphy->qusb_phy_host_init_seq) {
+			qphy->host_init_seq_len =
+				(size / sizeof(*qphy->qusb_phy_host_init_seq));
+			if (qphy->host_init_seq_len % 2) {//array length should be even,or it is invalid
+				dev_err(dev, "invalid host_init_seq_len\n");
+				kfree(qphy->qusb_phy_host_init_seq);
+			}
+			else{
+				ret = of_property_read_u32_array(dev->of_node,
+						"qcom,qusb-phy-host-init-seq",
+					       qphy->qusb_phy_host_init_seq,
+						qphy->host_init_seq_len);
+				if(!ret)
+					qphy->use_host_flag = true;
+			}
+		} else {
+			dev_err(dev, "error allocating memory for phy_host_init_seq\n");
 		}
 	}
 

@@ -62,30 +62,19 @@ static void thermal_zone_trip_update(struct thermal_zone_device *tz, int trip)
 		dev_dbg(&instance->cdev->device, "old_target=%d, target=%d\n",
 					old_target, (int)instance->target);
 
-		if (instance->initialized && old_target == instance->target)
+                if (instance->initialized && old_target == instance->target)
 			continue;
 
-		if (!instance->initialized) {
-			if (instance->target != THERMAL_NO_TARGET) {
-				trace_thermal_zone_trip(tz, trip, trip_type,
-							true);
-				tz->passive += 1;
-			}
-		} else {
-			if (old_target == THERMAL_NO_TARGET &&
+		if (old_target == THERMAL_NO_TARGET &&
 				instance->target != THERMAL_NO_TARGET) {
-				trace_thermal_zone_trip(tz, trip, trip_type,
-							true);
-				tz->passive += 1;
-			} else if (old_target != THERMAL_NO_TARGET &&
+			trace_thermal_zone_trip(tz, trip, trip_type, true);
+			tz->passive += 1;
+		} else if (old_target != THERMAL_NO_TARGET &&
 				instance->target == THERMAL_NO_TARGET) {
-				trace_thermal_zone_trip(tz, trip, trip_type,
-							false);
-				tz->passive -= 1;
-			}
+			trace_thermal_zone_trip(tz, trip, trip_type, false);
+			tz->passive -= 1;
 		}
-
-		instance->initialized = true;
+                instance->initialized = true;
 		instance->cdev->updated = false; /* cdev needs update */
 	}
 

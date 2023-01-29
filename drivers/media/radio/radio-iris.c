@@ -37,6 +37,170 @@
 #include <media/v4l2-ioctl.h>
 #include <media/radio-iris.h>
 #include <asm/unaligned.h>
+#include <linux/of_gpio.h>
+#include <linux/of.h>
+
+#define DEFAULT_FM_LNA_NONEED    (-1)
+#define GPIO_PULL_UP             (1)
+#define GPIO_PULL_DOWN           (0)
+#define SCAN_SEEK_MODE           (5)
+#define MAX_MODE                 (15)
+
+//gpio port: expected 95, otherwise -1
+static int g_lna_en_gpio = DEFAULT_FM_LNA_NONEED;
+//seek complete flag used for set mode
+static int cmpl_flag = 0;
+//wired-headset status. false: no wired headset, ture: has wired headset
+static bool is_headset_on = false;
+//true: built-in FM designed with multi-mode selection
+static bool is_multi_mode = false;
+//true: built-in FM designed only pull up and down gpio is needed
+static bool is_single_mode = false;
+//a flag to ignore the unnecessary tune event after the scan complete event received from FM chip
+//false: do not report the tune event after the scan(not seek) complete
+static bool gTuneState = true;
+
+/*********************************************************************************
+Function:       get_design_type
+Description:    this func is to get the type of how to operate gpio from the preset fm dtsi
+                according to different hardware schemes, and then set the corresponding flag.
+                These flags are used to control the code routine of different hardware schemes.
+                We can comfigure fm,design_type in huawei-fm.dtsi or not. If we configure, the
+                value of this configuration can be "single" or "multi". If set "single", the value
+                of is_single_mode is true while is_multi_mode is false. Also, if we set it "multi",
+                the value of is_multi_mode is true while is_single_mode is false. So, is_multi_mode
+                and is_single_mode can not be true at the same time but both can be false if not
+                support built-in FM.
+                Name: fm,design_type
+                Value 1: single
+                Desc: built-in FM designed only pull up and down gpio is needed
+                Value 2: multi
+                Desc: built-in FM designed with multi-mode selection
+Called By:      iris_probe()
+Input:          none
+Output:         none
+*********************************************************************************/
+static void get_design_type(void) {
+    const char *type = NULL;
+    const char *design_type = "fm,design_type";
+    struct device_node *dp = NULL;
+    int ret;
+
+    dp = of_find_node_by_path("/huawei_fm_info");
+    if (!dp) {
+        FMDERR("%s: device is not available!\n", __func__);
+        return;
+    }
+    ret = of_property_read_string(dp, design_type, &type);
+    if (ret) {
+        FMDERR("missing %s in dt node.\n", design_type);
+        return;
+    }
+    if (!strcmp(type, "multi")) {
+        is_multi_mode = true;
+        FMDERR("design type is multi-mode.\n");
+    } else if (!strcmp(type, "single")) {
+        is_single_mode = true;
+        FMDERR("design type is single-mode.\n");
+    }
+
+    return;
+}
+
+/*********************************************************************************
+Function:       setHeadsetStatus
+Description:    this func is for audio driver side to set wired headset status,
+                and if plug in the wired headset, pull down the gpio always.
+Called By:      audio driver side wcd-mbhc-v2.c wcd_mbhc_jack_report()
+Input:          bool status: the instant wired headset status.
+Output:         none
+*********************************************************************************/
+void setHeadsetStatus(bool status) {
+    is_headset_on = status;
+    FMDBG("%s: is_headset_on is %d\n", __func__, is_headset_on);
+    if((is_multi_mode || is_single_mode) && is_headset_on
+            && gpio_is_valid(g_lna_en_gpio)) {
+        gpio_set_value_cansleep(g_lna_en_gpio, GPIO_PULL_DOWN);
+    }
+    return;
+}
+EXPORT_SYMBOL(setHeadsetStatus);
+
+/*********************************************************************************
+Function:       hw_lna_init
+Description:    this func is used for get and request gpio port, also set gpio output down.
+Called By:      iris_probe()
+Input:          struct device_node* np is the platform device node to get the gpio port
+Output:         sucess returns true, fail returns false
+*********************************************************************************/
+static bool hw_lna_init(struct device_node* np) {
+    int ret = 0;
+    if(NULL == np) {
+        FMDERR("%s: np is NULL\n", __func__);
+        goto err;
+    }
+    ret = of_get_named_gpio_flags(np, "fm,lna_gpio", 0, NULL);
+    if (ret < 0){
+        FMDERR("%s: ret<0 of_get_named_gpio %d.\n", __func__, ret);
+        g_lna_en_gpio = DEFAULT_FM_LNA_NONEED;
+        goto err;
+    } else {
+        FMDERR("%s: of_get_named_gpio is %d.\n", __func__, ret);
+        g_lna_en_gpio = ret;
+    }
+    ret = gpio_request(g_lna_en_gpio, "g_lna_en_gpio");
+    if (ret) {
+        g_lna_en_gpio = DEFAULT_FM_LNA_NONEED;
+        FMDERR("%s: Failed to request gpio %d.\n", __func__, g_lna_en_gpio);
+        goto err;
+    }
+    if (gpio_direction_output(g_lna_en_gpio, GPIO_PULL_DOWN)) {
+        FMDERR("%s: gpio set output failed!\n",__func__);
+        gpio_free(g_lna_en_gpio);
+        g_lna_en_gpio = DEFAULT_FM_LNA_NONEED;
+        goto err;
+    }
+    return true;
+err:
+    return false;
+}
+
+/*********************************************************************************
+Function:       hw_enable_fm_lna
+Description:    this func is used to generate the different mode by pull up and down
+                gpio regularly.
+Called By:      iris_set_freq(), iris_vidioc_s_hw_freq_seek()
+Input:          int gpio: gpio port, always 95
+                int cMode: can be regarded as electric capacity mode with different
+                           combination of pulse
+Output:         none
+*********************************************************************************/
+void hw_enable_fm_lna(int gpio, int cMode) {
+    int i;
+    if (!gpio_is_valid(gpio)) {
+        FMDERR("%s: Invalid gpio: %d\n", __func__, gpio);
+        return;
+    }
+    //first enable, need to pull gpio up
+    if (gpio_get_value_cansleep(gpio) == GPIO_PULL_DOWN) {
+        gpio_set_value_cansleep(gpio, GPIO_PULL_UP);
+        mdelay(20);
+    }
+    //before send pulse, need to pull down 1ms
+    gpio_set_value_cansleep(gpio, GPIO_PULL_DOWN);
+    mdelay(1);
+    //every pulse 20us up and down
+    for (i = 1; i <= cMode; i++ ) {
+        gpio_set_value_cansleep(gpio, GPIO_PULL_UP);
+        udelay(20);
+        gpio_set_value_cansleep(gpio, GPIO_PULL_DOWN);
+        udelay(20);
+    }
+    //pull up at last
+    gpio_set_value_cansleep(gpio, GPIO_PULL_UP);
+
+    return;
+}
 
 static unsigned int rds_buf = 100;
 static int oda_agt;
@@ -2578,7 +2742,8 @@ static inline void hci_ev_search_compl(struct radio_hci_dev *hdev,
 		struct sk_buff *skb)
 {
 	struct iris_device *radio = video_get_drvdata(video_get_dev());
-
+	if (SCAN == radio->g_search_mode)
+		gTuneState = false;
 	radio->search_on = 0;
 	iris_q_event(radio, IRIS_EVT_SEEK_COMPLETE);
 }
@@ -3040,7 +3205,12 @@ void radio_hci_event_packet(struct radio_hci_dev *hdev, struct sk_buff *skb)
 	FMDBG("event 0x%x", event);
 	switch (event) {
 	case HCI_EV_TUNE_STATUS:
-		hci_ev_tune_status(hdev, skb);
+		if(gTuneState)
+			hci_ev_tune_status(hdev, skb);
+		else {
+			gTuneState = true;
+			FMDERR("when scan complete, set tune state.");
+		}
 		break;
 	case HCI_EV_SEARCH_PROGRESS:
 	case HCI_EV_SEARCH_RDS_PROGRESS:
@@ -3084,6 +3254,8 @@ void radio_hci_event_packet(struct radio_hci_dev *hdev, struct sk_buff *skb)
 
 	case HCI_EV_SEARCH_COMPLETE:
 	case HCI_EV_SEARCH_RDS_COMPLETE:
+		//set seek or scan complete flag
+		cmpl_flag = 1;
 		hci_ev_search_compl(hdev, skb);
 		break;
 
@@ -3269,6 +3441,40 @@ static int iris_set_freq(struct iris_device *radio, unsigned int freq)
 	retval = hci_fm_tune_station(&freq, radio->fm_hdev);
 	if (retval < 0)
 		FMDERR("Error while setting the frequency : %d\n", retval);
+
+	//no wired-headset and support built-in fm, loop and select the best mode
+	if (is_multi_mode && (is_headset_on == false) && gpio_is_valid(g_lna_en_gpio)) {
+		int i;
+		int ret;
+		int sinr;
+		int max_sinr = -100;
+		int max_index = 0;
+
+		for(i = 0; i <= MAX_MODE; i++) {
+			//set mode i pulse and compare the sinr
+			hw_enable_fm_lna(g_lna_en_gpio, i);
+			mdelay(6);
+			if (radio->mode == FM_RECV) {
+				ret = hci_cmd(HCI_FM_GET_STATION_PARAM_CMD, radio->fm_hdev);
+				mdelay(10);
+				if (ret == 0) {
+					sinr = radio->fm_st_rsp.station_rsp.sinr;
+					if (sinr > 128)
+						sinr -= 256;
+					if(sinr > max_sinr) {
+						max_sinr = sinr;
+						max_index = i;
+					}
+				} else {
+					FMDERR("%s, Failed to Get station params.\n", __func__);
+				}
+			}
+		}
+		//set the best mode
+		FMDERR("iris_set_freq: using mode %d.\n", max_index);
+		hw_enable_fm_lna(g_lna_en_gpio, max_index);
+	}
+
 	return retval;
 }
 
@@ -4037,7 +4243,7 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 		break;
 	case V4L2_CID_PRIVATE_IRIS_SCANDWELL:
 		if (is_valid_scan_dwell_prd(ctrl->value)) {
-			radio->g_scan_time = ctrl->value;
+			radio->g_scan_time = 0;
 		} else {
 			FMDERR("%s: scandwell period is not valid\n", __func__);
 			retval = -EINVAL;
@@ -4061,6 +4267,7 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 				retval = -EINVAL;
 				goto end;
 			}
+			gTuneState = true;
 			radio->mode = FM_RECV_TURNING_ON;
 			retval = hci_cmd(HCI_FM_ENABLE_RECV_CMD,
 							 radio->fm_hdev);
@@ -4069,6 +4276,9 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 				radio->mode = FM_OFF;
 				goto end;
 			} else {
+				if (is_single_mode && (is_headset_on == false) && gpio_is_valid(g_lna_en_gpio)) {
+					gpio_set_value_cansleep(g_lna_en_gpio, GPIO_PULL_UP);
+				}
 				retval = initialise_recv(radio);
 				if (retval < 0) {
 					FMDERR("Error while initialising\n");
@@ -4076,6 +4286,9 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 					hci_cmd(HCI_FM_DISABLE_RECV_CMD,
 							radio->fm_hdev);
 					radio->mode = FM_OFF;
+					if (is_single_mode && (is_headset_on == false) && gpio_is_valid(g_lna_en_gpio)) {
+						gpio_set_value_cansleep(g_lna_en_gpio, GPIO_PULL_DOWN);
+					}
 					goto end;
 				}
 			}
@@ -4116,6 +4329,10 @@ static int iris_vidioc_s_ctrl(struct file *file, void *priv,
 			radio->spur_table_size = 0;
 			switch (radio->mode) {
 			case FM_RECV:
+				//if support built-in fm, pull down the gpio always when FM off
+				if((is_multi_mode || is_single_mode) && gpio_is_valid(g_lna_en_gpio)) {
+					gpio_set_value_cansleep(g_lna_en_gpio, GPIO_PULL_DOWN);
+				}
 				radio->mode = FM_TURNING_OFF;
 				retval = hci_cmd(HCI_FM_DISABLE_RECV_CMD,
 						radio->fm_hdev);
@@ -5338,7 +5555,63 @@ static int iris_vidioc_s_hw_freq_seek(struct file *file, void *priv,
 		dir = SRCH_DIR_UP;
 	else
 		dir = SRCH_DIR_DOWN;
-	return iris_search(radio, CTRL_ON, dir);
+
+	//if no wired-headset and support built-in, set mode 5 to scan or seek
+	if (is_multi_mode && (is_headset_on == false) && gpio_is_valid(g_lna_en_gpio)) {
+		int retval;
+		int ret;
+		int i;
+		int max_index = 0;
+		int max_sinr = -100;
+		int sinr;
+		//enable mode 5
+		hw_enable_fm_lna(g_lna_en_gpio, SCAN_SEEK_MODE);
+		mdelay(10);
+
+		cmpl_flag = 0;
+		retval = iris_search(radio, CTRL_ON, dir);
+
+		//only used for seek when search returns success
+		if ((SEEK == radio->g_search_mode) && (0 == retval)) {
+			//Add listener for complete event, if plug in wired-headset during seek, just break once complete.
+			//Else, loop and choose the best mode.
+			while(1) {
+				mdelay(50);
+				if (cmpl_flag) {
+					if(is_headset_on) {
+						//has headset, no need to operate gpio
+						break;
+					}
+					//no wired-headset, start to loop and set the best mode
+					for(i = 0; i <= MAX_MODE; i++) {
+						hw_enable_fm_lna(g_lna_en_gpio, i);
+						mdelay(6);
+						if (radio->mode == FM_RECV) {
+							ret = hci_cmd(HCI_FM_GET_STATION_PARAM_CMD, radio->fm_hdev);
+							mdelay(10);
+							if (ret == 0) {
+								sinr = radio->fm_st_rsp.station_rsp.sinr;
+								if (sinr > 128)
+									sinr -= 256;
+								if(sinr > max_sinr) {
+									max_sinr = sinr;
+									max_index = i;
+								}
+							} else {
+								FMDERR("%s, Failed to Get station params.\n", __func__);
+							}
+						}
+					}
+					hw_enable_fm_lna(g_lna_en_gpio, max_index);
+					break;
+				}
+			}
+			FMDERR("break while, seek return.\n");
+		}
+		return retval;
+	} else {
+		return iris_search(radio, CTRL_ON, dir);
+	}
 }
 
 static int iris_vidioc_querycap(struct file *file, void *priv,
@@ -5583,6 +5856,14 @@ static int iris_probe(struct platform_device *pdev)
 	if (priv_videodev != NULL) {
 		memcpy(priv_videodev, radio->videodev,
 			sizeof(struct video_device));
+		//get built-in fm hardware design type
+		get_design_type();
+		//init built-in FM if support
+		if (is_multi_mode || is_single_mode) {
+			if (hw_lna_init(pdev->dev.of_node)) {
+				FMDERR("%s: fm gpio request success.", __func__);
+			}
+		}
 	} else {
 		video_unregister_device(radio->videodev);
 		video_device_release(radio->videodev);
@@ -5609,6 +5890,11 @@ static int iris_remove(struct platform_device *pdev)
 		kfifo_free(&radio->data_buf[i]);
 
 	kfree(radio);
+
+	//when unload driver, free the gpio 95
+	if((is_multi_mode || is_single_mode) && gpio_is_valid(g_lna_en_gpio)) {
+		gpio_free(g_lna_en_gpio);
+	}
 
 	platform_set_drvdata(pdev, NULL);
 

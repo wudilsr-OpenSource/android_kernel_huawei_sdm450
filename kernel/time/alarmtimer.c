@@ -52,6 +52,93 @@ static struct rtc_timer		rtctimer;
 static struct rtc_device	*rtcdev;
 static DEFINE_SPINLOCK(rtcdev_lock);
 
+#define ALARM_AHEAD_TIME    (60)
+//shut down cost: avg:8s, std:4s
+#define ALARM_AFTER_TIME    (15)
+struct rtc_wkalrm poweroff_rtc_alarm = { 0, 0, {0} };
+
+/**
+ * set_power_on_alarm - set power on alarm value into rtc register
+ *
+ */
+int set_power_on_alarm(long time_sec, bool enable_irq)
+{
+	struct timespec tmp_time = {0};
+	struct rtc_time rtc_current_rtc_time = {0};
+	struct rtc_time setting_time = {0};
+	struct rtc_device *rtc = NULL;
+	unsigned long rtc_current_time = 0;
+	unsigned long offset = 0;
+	unsigned long alarm_value = 0;
+
+	rtc = alarmtimer_get_rtcdev();
+	if (!rtc) {
+		pr_err("%s(): get rtc device failed\n",__func__);
+		return -EBUSY;
+	}
+
+	/* remove rtc alarm */
+	if (time_sec == 0) {
+		pr_info("%s(): remove rtc alarm\n", __func__);
+		/* set current as alarm time, and turn off the irq */
+		rtc_time_to_tm(rtc_current_time, &poweroff_rtc_alarm.time);
+		poweroff_rtc_alarm.enabled = 0;
+		rtc_set_alarm(rtc, &poweroff_rtc_alarm);
+		return 0;
+	}
+	getnstimeofday(&tmp_time);
+
+	rtc_time_to_tm(time_sec, &setting_time);
+	pr_info("%s() setting_time is : [%d-%d-%d] [%d:%d:%d] %lu\n",
+		__func__,
+		setting_time.tm_year + 1900,
+		setting_time.tm_mon + 1,
+		setting_time.tm_mday,
+		setting_time.tm_hour,
+		setting_time.tm_min,
+		setting_time.tm_sec,
+		time_sec);
+
+	rtc_read_time(rtc,&rtc_current_rtc_time);
+	rtc_tm_to_time(&rtc_current_rtc_time, &rtc_current_time);
+	pr_info("%s() rtc_current_rtc_time is : [%d-%d-%d] [%d:%d:%d] %lu\n",
+		__func__,
+		rtc_current_rtc_time.tm_year + 1900,
+		rtc_current_rtc_time.tm_mon + 1,
+		rtc_current_rtc_time.tm_mday,
+		rtc_current_rtc_time.tm_hour,
+		rtc_current_rtc_time.tm_min,
+		rtc_current_rtc_time.tm_sec,
+		rtc_current_time);
+
+	/* get offset if system utc time does not equal rtc time */
+	offset = tmp_time.tv_sec - rtc_current_time;
+	/* printk(KERN_INFO "%ld - %ld = %ld\n", */
+	/*       tmp_time.tv_sec, rtc_current_time, offset); */
+
+	memset(&poweroff_rtc_alarm, 0, sizeof(poweroff_rtc_alarm));
+	alarm_value = time_sec - offset;
+	if (alarm_value < (ALARM_AHEAD_TIME + rtc_current_time)) {
+		//less then 60s: phone'll be start in 15s after shut down
+		alarm_value = ALARM_AFTER_TIME + rtc_current_time;
+	}else{
+		alarm_value -= ALARM_AHEAD_TIME;
+	}
+	rtc_time_to_tm(alarm_value, &poweroff_rtc_alarm.time);
+	poweroff_rtc_alarm.enabled = (enable_irq == true ? 1 : 0);
+	pr_info("%s() set_rtc_time is : [%d-%d-%d] [%d:%d:%d] %lu\n",
+		__func__,
+		poweroff_rtc_alarm.time.tm_year + 1900,
+		poweroff_rtc_alarm.time.tm_mon + 1,
+		poweroff_rtc_alarm.time.tm_mday,
+		poweroff_rtc_alarm.time.tm_hour,
+		poweroff_rtc_alarm.time.tm_min,
+		poweroff_rtc_alarm.time.tm_sec,
+		alarm_value);
+	rtc_set_alarm(rtc, &poweroff_rtc_alarm);
+	return 0;
+}
+
 static void alarmtimer_triggered_func(void *p)
 {
 	struct rtc_device *rtc = rtcdev;
@@ -487,12 +574,14 @@ EXPORT_SYMBOL_GPL(alarm_forward_now);
  * clock2alarm - helper that converts from clockid to alarmtypes
  * @clockid: clockid.
  */
-static enum alarmtimer_type clock2alarm(clockid_t clockid)
+enum alarmtimer_type clock2alarm(clockid_t clockid)
 {
 	if (clockid == CLOCK_REALTIME_ALARM)
 		return ALARM_REALTIME;
 	if (clockid == CLOCK_BOOTTIME_ALARM)
 		return ALARM_BOOTTIME;
+	if (clockid == CLOCK_POWEROFF_ALARM)
+		return ALARM_POWEROFF_REALTIME;
 	return -1;
 }
 
@@ -886,10 +975,13 @@ static int __init alarmtimer_init(void)
 
 	posix_timers_register_clock(CLOCK_REALTIME_ALARM, &alarm_clock);
 	posix_timers_register_clock(CLOCK_BOOTTIME_ALARM, &alarm_clock);
+	posix_timers_register_clock(CLOCK_POWEROFF_ALARM, &alarm_clock);
 
 	/* Initialize alarm bases */
 	alarm_bases[ALARM_REALTIME].base_clockid = CLOCK_REALTIME;
 	alarm_bases[ALARM_REALTIME].gettime = &ktime_get_real;
+	alarm_bases[ALARM_POWEROFF_REALTIME].base_clockid = CLOCK_REALTIME;
+	alarm_bases[ALARM_POWEROFF_REALTIME].gettime = &ktime_get_real;
 	alarm_bases[ALARM_BOOTTIME].base_clockid = CLOCK_BOOTTIME;
 	alarm_bases[ALARM_BOOTTIME].gettime = &ktime_get_boottime;
 	for (i = 0; i < ALARM_NUMTYPE; i++) {

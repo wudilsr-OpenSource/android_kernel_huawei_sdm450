@@ -11,6 +11,11 @@ config WCNSS_CORE
 	  connectivity subsystem, Enable WCNSS core platform driver
 	  for WLAN.
 
+config HUAWEI_WIFI
+	tristate "wifi chip driver"
+	help
+	  use huawei feature
+
 config WCNSS_CORE_PRONTO
 	tristate "Qualcomm Technologies Inc. WCNSS Pronto Support"
 	depends on WCNSS_CORE
@@ -37,3 +42,4 @@ config CNSS_CRYPTO
 	  This feature enable wlan driver to use the crypto APIs exported
 	  from cnss platform driver. This crypto APIs used to generate cipher
 	  key and add support for the WLAN driver module security protocol.
+

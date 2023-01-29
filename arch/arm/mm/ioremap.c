@@ -317,6 +317,7 @@ static void __iomem * __arm_ioremap_pfn_caller(unsigned long pfn,
 	    paddr <= MSM8953_TLMM_END_ADDR)
 		prot = pgprot_stronglyordered(type->prot_pte);
 #endif
+
 #if !defined(CONFIG_SMP) && !defined(CONFIG_ARM_LPAE)
 	if (DOMAIN_IO == 0 &&
 	    (((cpu_architecture() >= CPU_ARCH_ARMv6) && (get_cr() & CR_XP)) ||

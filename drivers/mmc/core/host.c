@@ -31,6 +31,9 @@
 
 #include "core.h"
 #include "host.h"
+#ifdef CONFIG_HUAWEI_SDCARD_DSM
+#include <linux/mmc/dsm_sdcard.h>
+#endif
 #include "slot-gpio.h"
 #include "pwrseq.h"
 
@@ -713,6 +716,9 @@ again:
 	mmc_host_clk_init(host);
 
 	spin_lock_init(&host->lock);
+#ifdef CONFIG_HUAWEI_SDCARD_DSM
+	sdcard_dsm_dclient_init();
+#endif
 	init_waitqueue_head(&host->wq);
 	INIT_DELAYED_WORK(&host->detect, mmc_rescan);
 	setup_timer(&host->retune_timer, mmc_retune_timer, (unsigned long)host);

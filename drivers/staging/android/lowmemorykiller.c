@@ -53,7 +53,6 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/almk.h>
 #include <linux/show_mem_notifier.h>
-
 #ifdef CONFIG_HIGHMEM
 #define _ZONE ZONE_HIGHMEM
 #else
@@ -63,6 +62,11 @@
 #define CREATE_TRACE_POINTS
 #include "trace/lowmemorykiller.h"
 
+#include "lowmem_dbg.h"
+
+#ifdef CONFIG_HUAWEI_KSTATE
+#include <linux/hw_kcollect.h>
+#endif
 static u32 lowmem_debug_level = 1;
 static short lowmem_adj[6] = {
 	0,
@@ -262,7 +266,7 @@ static int can_use_cma_pages(gfp_t gfp_mask)
 	int i = 0;
 	int *mtype_fallbacks = get_migratetype_fallbacks(mtype);
 
-	if (is_migrate_cma(mtype)) {
+	if (is_migrate_cma(mtype) || mtype == MIGRATE_MOVABLE) {
 		can_use = 1;
 	} else {
 		for (i = 0;; i++) {
@@ -620,8 +624,12 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 			show_mem_call_notifiers();
 			dump_tasks(NULL, NULL);
 		}
-
+		lowmem_dbg(selected_oom_score_adj);
 		lowmem_deathpending_timeout = jiffies + HZ;
+#ifdef CONFIG_HUAWEI_KSTATE
+		/*0 stand for low memory kill*/
+		hwkillinfo(selected->tgid, 0);
+#endif
 		rem += selected_tasksize;
 		rcu_read_unlock();
 		/* give the system time to free up the memory */

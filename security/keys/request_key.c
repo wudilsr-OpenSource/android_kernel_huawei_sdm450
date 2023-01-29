@@ -21,6 +21,8 @@
 
 #define key_negative_timeout	60	/* default timeout on a negative key's existence */
 
+static int pid_nr_pfk = -1;
+
 /**
  * complete_request_key - Complete the construction of a key.
  * @cons: The key construction record.
@@ -603,6 +605,111 @@ error:
 	return key;
 }
 
+struct key *request_key_and_link_pfk(struct key_type *type,
+				 const char *description,
+				 const void *callout_info,
+				 size_t callout_len,
+				 void *aux,
+				 struct key *dest_keyring,
+				 unsigned long flags)
+{
+	struct keyring_search_context ctx = {
+		.index_key.type		= type,
+		.index_key.description	= description,
+		//.cred			= current_cred(),
+		.match_data.cmp		= key_default_cmp,
+		.match_data.raw_data	= description,
+		.match_data.lookup_type	= KEYRING_SEARCH_LOOKUP_DIRECT,
+		.flags			= (KEYRING_SEARCH_DO_STATE_CHECK |
+					   KEYRING_SEARCH_SKIP_EXPIRED),
+	};
+	struct key *key;
+	key_ref_t key_ref;
+	int ret;
+	struct task_struct *tsk_pfk = NULL;
+	struct pid *pid_pfk = NULL;
+
+	if(pid_nr_pfk >= 0) {
+		pid_pfk = find_get_pid(pid_nr_pfk);
+		if(pid_pfk) {
+			tsk_pfk = get_pid_task(pid_pfk, PIDTYPE_PID);
+			if(tsk_pfk) {
+				if(!strcmp(tsk_pfk->comm, "vold") && tsk_pfk->state != EXIT_TRACE) {
+					ctx.cred = __task_cred(tsk_pfk);
+					put_task_struct(tsk_pfk);
+					put_pid(pid_pfk);
+					goto skip_find_vold_task;
+				} else {
+					put_task_struct(tsk_pfk);
+				}
+			}
+			put_pid(pid_pfk);
+		}
+	}
+	read_lock(&tasklist_lock);
+	for_each_process(tsk_pfk) {
+		if (!strcmp(tsk_pfk->comm, "vold")) {
+			pid_nr_pfk = tsk_pfk->pid;
+			printk(KERN_ERR "pfk_f2fs, pid_nr_pfk = %ld\n", pid_nr_pfk);
+			break;
+		}
+	}
+	if (tsk_pfk == &init_task) {
+		pr_err("pfk_f2fs %s: do not find vold\n", __func__);
+		ctx.cred = current_cred();
+	} else
+		ctx.cred = __task_cred(tsk_pfk);
+	read_unlock(&tasklist_lock);
+
+skip_find_vold_task:
+	kenter("%s,%s,%p,%zu,%p,%p,%lx",
+	       ctx.index_key.type->name, ctx.index_key.description,
+	       callout_info, callout_len, aux, dest_keyring, flags);
+
+	if (type->match_preparse) {
+		ret = type->match_preparse(&ctx.match_data);
+		if (ret < 0) {
+			key = ERR_PTR(ret);
+			goto error;
+		}
+	}
+
+	/* search all the process keyrings for a key */
+	key_ref = search_process_keyrings(&ctx);
+
+	if (!IS_ERR(key_ref)) {
+		key = key_ref_to_ptr(key_ref);
+		if (dest_keyring) {
+			construct_get_dest_keyring(&dest_keyring);
+			ret = key_link(dest_keyring, key);
+			key_put(dest_keyring);
+			if (ret < 0) {
+				key_put(key);
+				key = ERR_PTR(ret);
+				goto error_free;
+			}
+		}
+	} else if (PTR_ERR(key_ref) != -EAGAIN) {
+		key = ERR_CAST(key_ref);
+	} else  {
+		/* the search failed, but the keyrings were searchable, so we
+		 * should consult userspace if we can */
+		key = ERR_PTR(-ENOKEY);
+		if (!callout_info)
+			goto error_free;
+
+		key = construct_key_and_link(&ctx, callout_info, callout_len,
+					     aux, dest_keyring, flags);
+	}
+
+error_free:
+	if (type->match_free)
+		type->match_free(&ctx.match_data);
+error:
+	kleave(" = %p", key);
+	return key;
+}
+
 /**
  * wait_for_key_construction - Wait for construction of a key to complete
  * @key: The key being waited for.
@@ -665,6 +772,34 @@ struct key *request_key(struct key_type *type,
 	return key;
 }
 EXPORT_SYMBOL(request_key);
+
+struct key *request_key_pfk(struct key_type *type,
+			const char *description,
+			const char *callout_info)
+{
+	struct key *key;
+	size_t callout_len = 0;
+	int ret;
+
+	if (callout_info)
+		callout_len = strlen(callout_info);
+	if (!strncmp(current->comm, "f2fs_gc-", strlen("f2fs_gc-"))) {
+		key = request_key_and_link_pfk(type, description, callout_info, callout_len,
+				   NULL, NULL, KEY_ALLOC_IN_QUOTA);
+	} else {
+		key = request_key_and_link(type, description, callout_info, callout_len,
+					NULL, NULL, KEY_ALLOC_IN_QUOTA);
+	}
+	if (!IS_ERR(key)) {
+		ret = wait_for_key_construction(key, false);
+		if (ret < 0) {
+			key_put(key);
+			return ERR_PTR(ret);
+		}
+	}
+	return key;
+}
+EXPORT_SYMBOL(request_key_pfk);
 
 /**
  * request_key_with_auxdata - Request a key with auxiliary data for the upcaller

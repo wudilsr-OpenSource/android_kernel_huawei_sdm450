@@ -18,6 +18,7 @@
 
 / {
 	model = "QRD SKU4";
+	compatible = "qcom,qrd";
 	qcom,board-id = <0xb 1>;
 };
 

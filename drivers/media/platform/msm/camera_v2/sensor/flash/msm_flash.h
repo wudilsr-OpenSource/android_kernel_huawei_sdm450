@@ -102,8 +102,16 @@ struct msm_flash_ctrl_t {
 
 	/* flash state */
 	enum msm_camera_flash_state_t flash_state;
+	int32_t last_flash_current;
 };
-
+enum msm_falsh_power_statue {
+	MSM_CAMERA_LED_TORCH_POWER_NORMAL = 108,//stand for not limit flash
+	MSM_CAMERA_LED_TORCH_POWER_LOW    = 109,//stand for limit flash
+};
+enum msm_flash_lock_status{
+	MSM_FLASH_STATUS_UNLOCK,
+	MSM_FLASH_STATUS_LOCKED,
+};
 int msm_flash_i2c_probe(struct i2c_client *client,
 	const struct i2c_device_id *id);
 

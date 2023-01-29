@@ -109,6 +109,7 @@ init_tag_map(struct request_queue *q, struct blk_queue_tag *tags, int depth)
 
 	tags->real_max_depth = depth;
 	tags->max_depth = depth;
+	tags->max_bg_depth = 0;
 	tags->tag_index = tag_index;
 	tags->tag_map = tag_map;
 

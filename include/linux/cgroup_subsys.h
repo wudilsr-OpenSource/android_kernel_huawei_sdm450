@@ -60,6 +60,10 @@ SUBSYS(hugetlb)
 SUBSYS(pids)
 #endif
 
+#if IS_ENABLED(CONFIG_CGROUP_IOLIMIT)
+SUBSYS(iolimit)
+#endif
+
 /*
  * The following subsystems are not supported on the default hierarchy.
  */
@@ -67,6 +71,9 @@ SUBSYS(pids)
 SUBSYS(debug)
 #endif
 
+#if IS_ENABLED(CONFIG_HW_CGROUP_WORKINGSET)
+SUBSYS(workingset)
+#endif
 /*
  * DO NOT ADD ANY SUBSYSTEM WITHOUT EXPLICIT ACKS FROM CGROUP MAINTAINERS.
  */

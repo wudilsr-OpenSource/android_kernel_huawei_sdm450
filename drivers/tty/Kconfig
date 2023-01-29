@@ -447,6 +447,13 @@ config MIPS_EJTAG_FDC_KGDB
           This enables the use of KGDB over an FDC channel, allowing KGDB to be
           used remotely or when a serial port isn't available.
 
+config HANDSET_SYSRQ_RESET
+         bool "Sysrq reset trigger by handset key pressing"
+         default n
+         help
+           This enables sysrq reset when volume down, up and power key are
+           pressed simultaneously.
+
 config MIPS_EJTAG_FDC_KGDB_CHAN
 	int "KGDB FDC channel"
 	depends on MIPS_EJTAG_FDC_KGDB

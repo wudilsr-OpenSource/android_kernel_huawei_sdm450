@@ -50,7 +50,6 @@
 		qcom,governor-per-policy;
 
 		qcom,cpufreq-table-0 =
-			 <  960000 >,
 			 < 1305600 >,
 			 < 1497600 >,
 			 < 1708800 >,
@@ -224,47 +223,6 @@
 	};
 };
 
-&kgsl_smmu {
-	qcom,enable-static-cb;
-};
-
-&reserved_memory {
-	gpu_mem: gpu_region@0 {
-		compatible = "shared-dma-pool";
-		reusable;
-		alloc-ranges = <0x0 0x80000000 0x0 0x10000000>;
-		alignment = <0 0x400000>;
-		size = <0 0x800000>;
-	};
-};
-
-&soc {
-	pil_gpu: qcom,kgsl-hyp {
-		compatible = "qcom,pil-tz-generic";
-		qcom,pas-id = <13>;
-		qcom,firmware-name = "a506_zap";
-		memory-region = <&gpu_mem>;
-		qcom,mas-crypto = <&mas_crypto>;
-		clocks = <&clock_gcc clk_gcc_crypto_clk>,
-		<&clock_gcc clk_gcc_crypto_ahb_clk>,
-		<&clock_gcc clk_gcc_crypto_axi_clk>,
-		<&clock_gcc clk_crypto_clk_src>;
-		clock-names = "scm_core_clk", "scm_iface_clk",
-				"scm_bus_clk", "scm_core_clk_src";
-		qcom,proxy-clock-names = "scm_core_clk", "scm_iface_clk",
-				"scm_bus_clk", "scm_core_clk_src";
-		qcom,scm_core_clk_src-freq = <80000000>;
-	};
-};
-
-&kgsl_msm_iommu {
-	gfx3d_secure: gfx3d_secure {
-		compatible = "qcom,smmu-kgsl-cb";
-		iommus = <&kgsl_smmu 2>;
-		memory-region = <&secure_mem>;
-	};
-};
-
 &clock_cpu {
 	compatible = "qcom,cpu-clock-sdm439";
 	vdd-c0-supply = <&apc_vreg_corner>;
@@ -280,7 +238,6 @@
 
 	qcom,speed0-bin-v0-c1 =
 		<          0 0>,
-		<  960000000 1>,
 		< 1305600000 1>,
 		< 1497600000 2>,
 		< 1708800000 3>,
@@ -301,7 +258,6 @@
 
 	qcom,speed1-bin-v0-c1 =
 		<          0 0>,
-		<  960000000 1>,
 		< 1305600000 1>,
 		< 1497600000 2>,
 		< 1708800000 3>,
@@ -354,10 +310,10 @@
 	reg = <0x001a94400 0x400>,
 		<0x0184d074 0x8>;
 	reg-names = "pll_base", "gdsc_base";
-	qcom,dsi-pll-ssc-en;
-	qcom,dsi-pll-ssc-mode = "down-spread";
-	qcom,ssc-frequency-hz = <31500>;
-	qcom,ssc-ppm = <5000>;
+	/delete-property/ qcom,dsi-pll-ssc-en;
+	/delete-property/ qcom,dsi-pll-ssc-mode;
+	/delete-property/ qcom,ssc-frequency-hz;
+	/delete-property/ qcom,ssc-ppm;
 };
 
 &mdss_dsi1_pll {
@@ -365,10 +321,10 @@
 	reg = <0x001a96400 0x400>,
 		<0x0184d074 0x8>;
 	reg-names = "pll_base", "gdsc_base";
-	qcom,dsi-pll-ssc-en;
-	qcom,dsi-pll-ssc-mode = "down-spread";
-	qcom,ssc-frequency-hz = <31500>;
-	qcom,ssc-ppm = <5000>;
+	/delete-property/ qcom,dsi-pll-ssc-en;
+	/delete-property/ qcom,dsi-pll-ssc-mode;
+	/delete-property/ qcom,ssc-frequency-hz;
+	/delete-property/ qcom,ssc-ppm;
 };
 
 &mdss_dsi {
@@ -638,14 +594,4 @@
 
 &mdss_mdp {
 	qcom,vbif-settings = <0xd0 0x20>;
-};
-
-&thermal_zones {
-	hexa-cpu-max-step {
-		trips {
-			cpu-trip {
-				temperature = <95000>;
-			};
-		};
-	};
 };

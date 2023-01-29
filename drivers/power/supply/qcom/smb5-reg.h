@@ -102,6 +102,8 @@ enum {
 #define JEITA_EN_COLD_SL_FCV_BIT		BIT(2)
 #define JEITA_EN_HOT_SL_CCC_BIT			BIT(1)
 #define JEITA_EN_COLD_SL_CCC_BIT		BIT(0)
+#define JEITA_EN_CFG_REG_MASK           0xff
+#define JEITA_EN                        0x1f
 
 #define JEITA_CCCOMP_CFG_HOT_REG		(CHGR_BASE + 0x92)
 #define JEITA_CCCOMP_CFG_COLD_REG		(CHGR_BASE + 0x93)
@@ -115,6 +117,7 @@ enum {
  *  DCDC Peripheral Registers  *
  ********************************/
 #define ICL_MAX_STATUS_REG			(DCDC_BASE + 0x06)
+
 #define ICL_STATUS_REG				(DCDC_BASE + 0x07)
 #define AICL_ICL_STATUS_REG			(DCDC_BASE + 0x08)
 
@@ -126,7 +129,6 @@ enum {
 #define USBIN_SUSPEND_STS_BIT			BIT(6)
 #define USE_USBIN_BIT				BIT(4)
 #define USE_DCIN_BIT				BIT(3)
-#define POWER_PATH_MASK				GENMASK(2, 1)
 #define VALID_INPUT_POWER_SOURCE_STS_BIT	BIT(0)
 
 #define DCDC_CMD_OTG_REG			(DCDC_BASE + 0x40)
@@ -199,6 +201,7 @@ enum {
 #define QC_5V_BIT				BIT(0)
 #define QC_2P0_STATUS_MASK			GENMASK(2, 0)
 
+#define USBIN_IRQ_STATUS			(USBIN_BASE + 0x10)
 /* USBIN Interrupt Bits */
 #define USBIN_ICL_CHANGE_RT_STS_BIT		BIT(7)
 #define USBIN_SOURCE_CHANGE_RT_STS_BIT		BIT(6)
@@ -277,11 +280,10 @@ enum {
  *  TYPEC Peripheral Registers  *
  ********************************/
 #define TYPE_C_SNK_STATUS_REG			(TYPEC_BASE + 0x06)
-#define DETECTED_SRC_TYPE_MASK			GENMASK(3, 0)
+#define DETECTED_SRC_TYPE_MASK			GENMASK(3, 1)
 #define SNK_RP_STD_BIT				BIT(3)
 #define SNK_RP_1P5_BIT				BIT(2)
 #define SNK_RP_3P0_BIT				BIT(1)
-#define SNK_RP_SHORT_BIT			BIT(0)
 
 #define TYPE_C_SRC_STATUS_REG			(TYPEC_BASE + 0x08)
 #define DETECTED_SNK_TYPE_MASK			GENMASK(4, 0)
@@ -295,7 +297,6 @@ enum {
 #define TYPEC_ATTACH_DETACH_STATE_BIT		BIT(5)
 
 #define TYPE_C_MISC_STATUS_REG			(TYPEC_BASE + 0x0B)
-#define TYPEC_WATER_DETECTION_STATUS_BIT	BIT(7)
 #define SNK_SRC_MODE_BIT			BIT(6)
 #define TYPEC_VBUS_ERROR_STATUS_BIT		BIT(4)
 #define CC_ORIENTATION_BIT			BIT(1)
@@ -308,14 +309,9 @@ enum {
 #define TYPEC_U_USB_STATUS_REG			(TYPEC_BASE + 0x0F)
 #define U_USB_GROUND_NOVBUS_BIT			BIT(6)
 #define U_USB_GROUND_BIT			BIT(4)
-#define U_USB_FMB1_BIT				BIT(3)
-#define U_USB_FLOAT1_BIT			BIT(2)
-#define U_USB_FMB2_BIT				BIT(1)
-#define U_USB_FLOAT2_BIT			BIT(0)
 
 #define TYPE_C_MODE_CFG_REG			(TYPEC_BASE + 0x44)
 #define TYPEC_POWER_ROLE_CMD_MASK		GENMASK(2, 1)
-#define EN_TRY_SNK_BIT				BIT(4)
 #define EN_SRC_ONLY_BIT				BIT(2)
 #define EN_SNK_ONLY_BIT				BIT(1)
 #define TYPEC_DISABLE_CMD_BIT			BIT(0)
@@ -357,13 +353,7 @@ enum {
 #define REDUCE_TCCDEBOUNCE_TO_2MS_BIT		BIT(2)
 
 #define TYPEC_U_USB_CFG_REG			(TYPEC_BASE + 0x70)
-#define EN_MICRO_USB_FACTORY_MODE_BIT		BIT(1)
 #define EN_MICRO_USB_MODE_BIT			BIT(0)
-
-#define TYPEC_U_USB_WATER_PROTECTION_CFG_REG	(TYPEC_BASE + 0x72)
-#define EN_MICRO_USB_WATER_PROTECTION_BIT	BIT(4)
-#define MICRO_USB_DETECTION_ON_TIME_CFG_MASK	GENMASK(3, 2)
-#define MICRO_USB_DETECTION_PERIOD_CFG_MASK	GENMASK(1, 0)
 
 #define TYPEC_MICRO_USB_MODE_REG		(TYPEC_BASE + 0x73)
 #define MICRO_USB_MODE_ONLY_BIT			BIT(0)

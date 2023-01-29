@@ -167,7 +167,6 @@ struct mdss_panel_cfg {
 
 #define MDP_INTF_DSI_CMD_FIFO_UNDERFLOW		0x0001
 #define MDP_INTF_DSI_VIDEO_FIFO_OVERFLOW	0x0002
-#define MDP_INTF_DSI_PANEL_DEAD			0x0003
 
 
 enum {
@@ -660,10 +659,6 @@ struct mdss_panel_info {
 	u32 saved_fporch;
 	/* current fps, once is programmed in hw */
 	int current_fps;
-	u32 mdp_koff_thshold_low;
-	u32 mdp_koff_thshold_high;
-	bool mdp_koff_thshold;
-	u32 mdp_koff_delay;
 
 	int panel_max_fps;
 	int panel_max_vtotal;

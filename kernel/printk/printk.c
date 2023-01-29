@@ -49,6 +49,10 @@
 #include <asm/uaccess.h>
 #include <asm/sections.h>
 
+#ifdef CONFIG_SRECORDER
+#include <linux/srecorder.h>
+#endif
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/printk.h>
 
@@ -342,6 +346,9 @@ struct printk_log {
 	u8 facility;		/* syslog facility */
 	u8 flags:5;		/* internal record flags */
 	u8 level:3;		/* syslog level */
+	pid_t pid;              				/* task pid */
+	char comm[TASK_COMM_LEN];               /* task name */
+	u32 magic;
 }
 #ifdef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
 __packed __aligned(4)
@@ -369,8 +376,11 @@ static u32 log_first_idx;
 
 /* index and sequence number of the next record to store in the buffer */
 static u64 log_next_seq;
+#ifndef CONFIG_SRECORDER
 static u32 log_next_idx;
-
+#else
+static u32 log_next_idx __attribute__((__section__(".data")));
+#endif
 /* the next printk record to write to the console */
 static u64 console_seq;
 static u32 console_idx;
@@ -389,9 +399,38 @@ static u32 clear_idx;
 /* record buffer */
 #define LOG_ALIGN __alignof__(struct printk_log)
 #define __LOG_BUF_LEN (1 << CONFIG_LOG_BUF_SHIFT)
+static u32 __log_align __used = LOG_ALIGN;
+#define LOG_MAGIC(msg) ((msg)->magic = 0x5d7aefca)
+#ifndef CONFIG_SRECORDER
 static char __log_buf[__LOG_BUF_LEN] __aligned(LOG_ALIGN);
 static char *log_buf = __log_buf;
 static u32 log_buf_len = __LOG_BUF_LEN;
+#else
+static char __log_buf[__LOG_BUF_LEN] __attribute__((__section__(".data")));
+static char *log_buf __attribute__((__section__(".data"))) = __log_buf;
+static u32 log_buf_len __attribute__((__section__(".data"))) = __LOG_BUF_LEN;
+void srecorder_get_printk_buf_info(unsigned long* p_log_buf, unsigned* p_log_end, unsigned* p_log_buf_len)
+{
+    if((p_log_buf == NULL)||(p_log_end==NULL)||(p_log_buf_len==NULL))
+    {
+        return;
+    }
+    *p_log_buf = (unsigned long)log_buf;
+    *p_log_end = (unsigned)log_next_idx;
+    *p_log_buf_len = log_buf_len;
+}
+EXPORT_SYMBOL(srecorder_get_printk_buf_info);
+#endif
+
+#ifdef CONFIG_HUAWEI_BFM
+void hwboot_get_printk_buf_info(u64 **fseq, u32 **fidx, u64 **nseq)
+{
+   *fseq = &log_first_seq;
+   *fidx = &log_first_idx;
+   *nseq = &log_next_seq;
+   return;
+}
+#endif
 
 /* Return log buffer address */
 char *log_buf_addr_get(void)
@@ -543,6 +582,31 @@ static int log_store(int facility, int level,
 	u32 size, pad_len;
 	u16 trunc_msg_len = 0;
 
+/* test time */
+#ifndef CONFIG_FINAL_RELEASE
+	struct tm tm_rtc;
+	unsigned long cur_secs=0;
+	static char tmp_buf[100];
+	static int tmp_len=0;
+	static unsigned long prev_jffy = 0;
+	static unsigned long prejf_init_flag = 0;
+	if (prejf_init_flag == 0) {
+		prejf_init_flag = 1;
+		prev_jffy = jiffies;
+	}
+	cur_secs = get_seconds();
+	cur_secs -= sys_tz.tz_minuteswest * 60;
+	time_to_tm(cur_secs, 0, &tm_rtc);
+	if (time_after(jiffies, prev_jffy + 1 * HZ)) {
+		prev_jffy = jiffies;
+		tmp_len=0;
+		tmp_len += snprintf(tmp_buf, sizeof(tmp_buf), "[%lu:%.2d:%.2d %.2d:%.2d:%.2d]",
+                    1900 + tm_rtc.tm_year, tm_rtc.tm_mon + 1, tm_rtc.tm_mday, tm_rtc.tm_hour, tm_rtc.tm_min, tm_rtc.tm_sec
+		);
+	}
+	text_len+=tmp_len;
+#endif
+
 	/* number of '\0' padding bytes to next message */
 	size = msg_used_size(text_len, dict_len, &pad_len);
 
@@ -562,12 +626,18 @@ static int log_store(int facility, int level,
 		 * to signify a wrap around.
 		 */
 		memset(log_buf + log_next_idx, 0, sizeof(struct printk_log));
+		LOG_MAGIC((struct printk_log *)(log_buf + log_next_idx));
 		log_next_idx = 0;
 	}
 
 	/* fill message */
 	msg = (struct printk_log *)(log_buf + log_next_idx);
+#ifndef CONFIG_FINAL_RELEASE
+	memcpy(log_text(msg), tmp_buf, tmp_len);
+	memcpy(log_text(msg)+tmp_len, text, text_len-tmp_len);
+#else
 	memcpy(log_text(msg), text, text_len);
+#endif
 	msg->text_len = text_len;
 	if (trunc_msg_len) {
 		memcpy(log_text(msg) + text_len, trunc_msg, trunc_msg_len);
@@ -578,6 +648,10 @@ static int log_store(int facility, int level,
 	msg->facility = facility;
 	msg->level = level & 7;
 	msg->flags = flags & 0x1f;
+	msg->pid = current->pid;
+	memset(msg->comm, 0, TASK_COMM_LEN);
+	memcpy(msg->comm, current->comm, TASK_COMM_LEN-1);
+	LOG_MAGIC(msg);
 	if (ts_nsec > 0)
 		msg->ts_nsec = ts_nsec;
 	else
@@ -918,7 +992,10 @@ static int devkmsg_open(struct inode *inode, struct file *file)
 {
 	struct devkmsg_user *user;
 	int err;
-
+#ifdef DEVKMSG_LIMIT_CONTROL
+	int interval = 5;
+	int burst = 100;
+#endif
 	if (devkmsg_log & DEVKMSG_LOG_MASK_OFF)
 		return -EPERM;
 
@@ -934,7 +1011,11 @@ static int devkmsg_open(struct inode *inode, struct file *file)
 	if (!user)
 		return -ENOMEM;
 
+#ifdef  DEVKMSG_LIMIT_CONTROL
+	ratelimit_state_init(&user->rs, interval, burst);
+#else
 	ratelimit_default_init(&user->rs);
+#endif
 	ratelimit_set_flags(&user->rs, RATELIMIT_MSG_ON_RELEASE);
 
 	mutex_init(&user->lock);
@@ -1190,7 +1271,19 @@ static size_t print_time(u64 ts, char *buf)
 	return sprintf(buf, "[%5lu.%06lu] ",
 		       (unsigned long)ts, rem_nsec / 1000);
 }
+static bool printk_task_info = 1;
+module_param_named(task_info, printk_task_info, bool, S_IRUGO | S_IWUSR);
 
+static size_t print_task_info(pid_t pid, const char *task_name, char *buf)
+{
+	if (!printk_task_info)
+		return 0;
+
+	if (!buf)
+		return snprintf(NULL, 0, "[%d, %s]", pid, task_name);
+
+	return sprintf(buf, "[%d, %s]", pid, task_name);
+}
 static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
 {
 	size_t len = 0;
@@ -1209,7 +1302,7 @@ static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
 				len++;
 		}
 	}
-
+	len += print_task_info(msg->pid, msg->comm, buf ? buf + len : NULL);
 	len += print_time(msg->ts_nsec, buf ? buf + len : NULL);
 	return len;
 }
@@ -1272,6 +1365,72 @@ static size_t msg_print_text(const struct printk_log *msg, enum log_flags prev,
 
 	return len;
 }
+
+#ifdef CONFIG_HUAWEI_BFM
+int kmsg_print_to_ddr(char *buf, int size)
+{
+	char *text;
+	struct printk_log *msg;
+	int len = 0;
+	u64 kmsg_seq = 0;
+	u32 kmsg_idx = 0;
+	enum log_flags kmsg_prev = 0;
+	size_t kmsg_partial = 0;
+
+	text = kmalloc(LOG_LINE_MAX + PREFIX_MAX, GFP_KERNEL);
+	if (!text)
+		return -ENOMEM;
+
+	while (size > 0) {
+		size_t n;
+		size_t skip;
+
+		raw_spin_lock_irq(&logbuf_lock);
+		if (kmsg_seq < log_first_seq) {
+			/* messages are gone, move to first one */
+			kmsg_seq = log_first_seq;
+			kmsg_idx = log_first_idx;
+			kmsg_prev = 0;
+			kmsg_partial = 0;
+		}
+		if (kmsg_seq == log_next_seq) {
+			raw_spin_unlock_irq(&logbuf_lock);
+			break;
+		}
+
+		skip = kmsg_partial;
+		msg = log_from_idx(kmsg_idx);
+		n = msg_print_text(msg, kmsg_prev, true, text,
+				   LOG_LINE_MAX + PREFIX_MAX);
+		if (n - kmsg_partial <= size) {
+			/* message fits into buffer, move forward */
+			kmsg_idx = log_next(kmsg_idx);
+			kmsg_seq++;
+			kmsg_prev = msg->flags;
+			n -= kmsg_partial;
+			kmsg_partial = 0;
+		} else if (!len){
+			/* partial read(), remember position */
+			n = size;
+			kmsg_partial += n;
+		} else
+			n = 0;
+		raw_spin_unlock_irq(&logbuf_lock);
+
+		if (!n)
+			break;
+
+		memcpy(buf, text + skip, n);
+
+		len += n;
+		size -= n;
+		buf += n;
+	}
+
+	kfree(text);
+	return len;
+}
+#endif
 
 static int syslog_print(char __user *buf, int size)
 {

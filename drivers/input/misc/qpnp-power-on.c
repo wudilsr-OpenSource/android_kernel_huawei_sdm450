@@ -33,6 +33,28 @@
 #include <linux/input/qpnp-power-on.h>
 #include <linux/power_supply.h>
 
+#ifdef CONFIG_HUAWEI_DSM
+#include <dsm/dsm_pub.h>
+#include <linux/lcdkit_dsm.h>
+#endif
+
+#ifdef CONFIG_HUAWEI_PMU_DSM
+#include <linux/power/huawei_dsm_charger.h>
+#endif
+
+#ifdef CONFIG_HUAWEI_BFM
+#include <linux/kallsyms.h>
+#include <linux/syscalls.h>
+#include <linux/rtc.h>
+#include <chipset_common/bfmr/bfm/core/bfm_core.h>
+#include <chipset_common/bfmr/bfm/chipsets/bfm_chipsets.h>
+#include <chipset_common/bfmr/bfm/chipsets/qcom/bfm_qcom.h>
+#endif
+
+#ifdef CONFIG_HW_ZEROHUNG
+#include <chipset_common/hwzrhung/hung_wp_screen.h>
+#endif
+
 #define PMIC_VER_8941           0x01
 #define PMIC_VERSION_REG        0x0105
 #define PMIC_VERSION_REV4_REG   0x0103
@@ -151,9 +173,32 @@
 
 #define QPNP_KEY_STATUS_DELAY			msecs_to_jiffies(250)
 
+#ifdef CONFIG_HUAWEI_BFM
+#define QPNP_PON_BUFFER_SIZE			10
+#else
 #define QPNP_PON_BUFFER_SIZE			9
+#endif
 
 #define QPNP_POFF_REASON_UVLO			13
+
+#ifdef CONFIG_HUAWEI_BFM
+#define QPNP_LONG_PRESS_DELAY			(0)
+#endif
+
+#ifdef CONFIG_HUAWEI_PMU_DSM
+#define PON_REA_SMPL	1
+#define DSM_SMPL_ERR            920003000
+#define CHECK_PMU_STATUS_DELAY			msecs_to_jiffies(10000)
+
+
+ /*pmu dsm client definition */
+ struct dsm_dev dsm_smpl = {
+	.name = "dsm_smpl", // dsm client name
+	.fops = NULL,
+	.buff_size = 1024, // buffer size
+ };
+ struct dsm_client *smpl_dclient = NULL;
+#endif
 
 enum qpnp_pon_version {
 	QPNP_PON_GEN1_V1,
@@ -202,6 +247,15 @@ struct qpnp_pon {
 	struct pon_regulator	*pon_reg_cfg;
 	struct list_head	list;
 	struct delayed_work	bark_work;
+	
+#ifdef CONFIG_HUAWEI_BFM
+    struct delayed_work long_press_bark_work;
+#endif
+
+#ifdef CONFIG_HUAWEI_PMU_DSM
+		struct delayed_work dsm_smpl_work;
+#endif
+
 	struct dentry		*debugfs;
 	int			pon_trigger_reason;
 	int			pon_power_off_reason;
@@ -244,6 +298,10 @@ static u32 s1_delay[PON_S1_COUNT_MAX + 1] = {
 	0, 32, 56, 80, 138, 184, 272, 408, 608, 904, 1352, 2048,
 	3072, 4480, 6720, 10256
 };
+
+#ifdef CONFIG_HUAWEI_KERNEL
+int huawei_pon_regs[MAX_REG_TYPE] = {-1, -1, -1};
+#endif
 
 static const char * const qpnp_pon_reason[] = {
 	[0] = "Triggered from Hard Reset",
@@ -305,6 +363,13 @@ static const char * const qpnp_poff_reason[] = {
 	[38] = "Triggered from S3_RESET_PBS_NACK",
 	[39] = "Triggered from S3_RESET_KPDPWR_ANDOR_RESIN (power key and/or reset line)",
 };
+
+#ifdef CONFIG_HUAWEI_DSM
+struct lcd_pwr_status_t lcd_pwr_status = {
+        .panel_power_on = 1,
+        .lcd_dcm_pwr_status = 0x0F,
+};
+#endif
 
 static int
 qpnp_pon_masked_write(struct qpnp_pon *pon, u16 addr, u8 mask, u8 val)
@@ -855,6 +920,12 @@ static int qpnp_pon_store_and_clear_warm_reset(struct qpnp_pon *pon)
 	}
 	pon->warm_reset_reason1 = (u8)val;
 
+#ifdef CONFIG_HUAWEI_KERNEL
+    if (0 == (to_spmi_device(pon->pdev->dev.parent)->usid)){
+        huawei_pon_regs[WARM_REASON_INDEX] = ffs(pon->warm_reset_reason1)-1;
+    }
+#endif
+
 	if (is_pon_gen1(pon) || pon->subtype == PON_1REG) {
 		rc = regmap_read(pon->regmap, QPNP_PON_WARM_RESET_REASON2(pon),
 				 &val);
@@ -948,6 +1019,13 @@ qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 					cfg->key_code, pon_rt_sts);
 	key_status = pon_rt_sts & pon_rt_bit;
 
+#ifdef CONFIG_HW_ZEROHUNG
+    hung_wp_screen_qcom_pkey_press(cfg->pon_type, key_status);
+    if (cfg->pon_type == PON_KPDPWR) {
+        hung_wp_screen_powerkey_ncb(WP_SCREEN_PWK_RELEASE ^ key_status);
+    }
+#endif
+
 	if (pon->kpdpwr_dbc_enable && cfg->pon_type == PON_KPDPWR) {
 		if (!key_status)
 			pon->kpdpwr_last_release_time = ktime_get();
@@ -984,6 +1062,13 @@ static irqreturn_t qpnp_kpdpwr_irq(int irq, void *_pon)
 
 static irqreturn_t qpnp_kpdpwr_bark_irq(int irq, void *_pon)
 {
+
+#ifdef CONFIG_HUAWEI_BFM
+		struct qpnp_pon *pon = _pon;
+		schedule_delayed_work(&pon->long_press_bark_work, QPNP_LONG_PRESS_DELAY);
+		pr_info("long press power key have detected!\n");
+#endif
+
 	return IRQ_HANDLED;
 }
 
@@ -1119,6 +1204,47 @@ static void bark_work_func(struct work_struct *work)
 err_return:
 	return;
 }
+
+#ifdef CONFIG_HUAWEI_BFM
+#define USER_WAIT_SECS_ON_LOGO (50)
+extern void msm_trigger_wdog_bark(void);
+static void long_press_bark_work_func(struct work_struct *work) {
+
+    int fd;
+    struct timespec curBootUpTime;
+
+    if (STAGE_BOOT_SUCCESS == qcom_get_boot_stage())
+    {
+        pr_err("%s:boot success,skip!\n",__func__);
+        return;
+    }
+
+    if (!bfmr_has_been_enabled())
+    {
+        pr_err("%s:bfmr disabled,skip!\n",__func__);
+        return;
+    }
+
+    fd = sys_access("/dev/block/bootdevice/by-name/pad0", 0);
+    if (0 != fd)
+    {
+        pr_err("%s:pad0 is not ready !\n",__func__);
+        get_monotonic_boottime(&curBootUpTime);
+        pr_err("%s: curBootUpTime is %ld \n",__func__,curBootUpTime.tv_sec);
+        if (curBootUpTime.tv_sec > USER_WAIT_SECS_ON_LOGO)
+        {
+            qcom_set_boot_fail_flag(KERNEL_PRESS10S);
+            msm_trigger_wdog_bark();
+        }
+    }
+    else
+    {
+        boot_fail_err(KERNEL_PRESS10S, DO_NOTHING, NULL);
+    }
+    return;
+}
+#endif
+
 
 static irqreturn_t qpnp_resin_bark_irq(int irq, void *_pon)
 {
@@ -1591,6 +1717,10 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 								cfg->pon_type);
 			return -EINVAL;
 		}
+
+#ifdef CONFIG_DIS_LONG_PRESS_REBOOT
+		cfg->support_reset = false;
+#endif
 
 		if (cfg->support_reset) {
 			/*
@@ -2086,6 +2216,39 @@ static int read_gen2_pon_off_reason(struct qpnp_pon *pon, u16 *reason,
 	return 0;
 }
 
+#ifdef CONFIG_HUAWEI_PMU_DSM
+ /* monitor power-on and power-off reasons, if abnormal, notify to dsm*/
+ static void monitor_power_on_off_reason(struct qpnp_pon *pon)
+ {
+	int rc, index;
+
+	if((!pon) || (!smpl_dclient))
+		return;
+
+	/* PON reason */
+	index = huawei_pon_regs[PON_REASON_INDEX];
+	if(PON_REA_SMPL == index){
+		/* if power on reason is SMPL, record this log, and notify to the dsm server*/
+		if(!dsm_client_ocuppy(smpl_dclient)){
+			dsm_client_record(smpl_dclient,
+				"PMIC@SID%d Power-on reason: %s\n",
+				to_spmi_device(pon->pdev->dev.parent)->usid, qpnp_pon_reason[index]);
+			dsm_client_notify(smpl_dclient, DSM_SMPL_ERR);
+		}
+	}
+}
+static void dsm_smpl_work_func(struct work_struct *work)
+ {
+	struct qpnp_pon *pon =
+		container_of(work, struct qpnp_pon, dsm_smpl_work.work);
+
+	if (!smpl_dclient) {
+		smpl_dclient = dsm_register_client(&dsm_smpl);
+	}
+	monitor_power_on_off_reason(pon);
+ }
+ #endif
+
 static int qpnp_pon_probe(struct platform_device *pdev)
 {
 	struct qpnp_pon *pon;
@@ -2241,6 +2404,12 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 			to_spmi_device(pon->pdev->dev.parent)->usid,
 			 qpnp_pon_reason[index],
 			cold_boot ? "cold" : "warm");
+#ifdef CONFIG_HUAWEI_KERNEL
+        /*we only restore SID0 power on reason*/
+        if (0 == (to_spmi_device(pon->pdev->dev.parent)->usid)){
+            huawei_pon_regs[PON_REASON_INDEX] = index;
+        }
+#endif
 	}
 
 	/* POFF reason */
@@ -2270,6 +2439,12 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 				"PMIC@SID%d: Power-off reason: %s\n",
 				to_spmi_device(pon->pdev->dev.parent)->usid,
 				qpnp_poff_reason[index]);
+#ifdef CONFIG_HUAWEI_KERNEL
+        /*we only restore SID0 power off reason*/
+        if (0 == (to_spmi_device(pon->pdev->dev.parent)->usid)){
+            huawei_pon_regs[POFF_REASON_INDEX] = index;
+        }
+#endif
 	}
 
 	if (pon->pon_trigger_reason == PON_SMPL ||
@@ -2338,6 +2513,10 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 	else /* default combination */
 		s3_src_reg = QPNP_PON_S3_SRC_KPDPWR_AND_RESIN;
 
+#ifdef CONFIG_DIS_LONG_PRESS_REBOOT
+	s3_src_reg = QPNP_PON_S3_SRC_KPDPWR_AND_RESIN;
+#endif
+
 	/*
 	 * S3 source is a write once register. If the register has
 	 * been configured by bootloader then this operation will
@@ -2354,6 +2533,19 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 	dev_set_drvdata(&pdev->dev, pon);
 
 	INIT_DELAYED_WORK(&pon->bark_work, bark_work_func);
+
+#ifdef CONFIG_HUAWEI_BFM
+		INIT_DELAYED_WORK(&pon->long_press_bark_work, long_press_bark_work_func);
+#endif
+
+#ifdef CONFIG_HUAWEI_DSM
+        init_timer(&lcd_pwr_status.lcd_dsm_t);
+#endif
+
+#ifdef CONFIG_HUAWEI_PMU_DSM
+		INIT_DELAYED_WORK(&pon->dsm_smpl_work, dsm_smpl_work_func);
+		schedule_delayed_work(&pon->dsm_smpl_work, CHECK_PMU_STATUS_DELAY);
+#endif
 
 	/* register the PON configurations */
 	rc = qpnp_pon_config_init(pon);
@@ -2541,6 +2733,10 @@ static int qpnp_pon_remove(struct platform_device *pdev)
 	device_remove_file(&pdev->dev, &dev_attr_debounce_us);
 
 	cancel_delayed_work_sync(&pon->bark_work);
+
+#ifdef CONFIG_HUAWEI_PMU_DSM
+	cancel_delayed_work_sync(&pon->dsm_smpl_work);
+#endif
 
 	if (pon->pon_input)
 		input_unregister_device(pon->pon_input);

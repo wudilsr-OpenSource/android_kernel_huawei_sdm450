@@ -436,6 +436,13 @@ static int qpnp_flash_led_init_settings(struct qpnp_flash_led *led)
 			return rc;
 
 		val |= 0x1 << led->fnode[i].id;
+		rc = qpnp_flash_led_write(led,
+			FLASH_LED_REG_SAFETY_TMR(led->base + addr_offset),
+			FLASH_LED_SAFETY_TMR_DISABLED);
+	        if(rc < 0){
+		    pr_err("Disable safty-timer fail!");
+                    return rc;
+		}
 	}
 
 	rc = qpnp_flash_led_write(led,

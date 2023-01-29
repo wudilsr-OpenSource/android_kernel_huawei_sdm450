@@ -79,7 +79,7 @@
 #define BATIF_CFG_SMISC_BATID_REG		(BATIF_BASE + 0x73)
 #define CFG_SMISC_RBIAS_EXT_CTRL_BIT		BIT(2)
 
-#define SMB2CHG_BATIF_ENG_SMISC_DIETEMP	(BATIF_BASE + 0xC0)
+#define SMB2CHG_BATIF_ENG_SMISC_DIETEMP		(BATIF_BASE + 0xC0)
 #define TDIE_COMPARATOR_THRESHOLD		GENMASK(5, 0)
 #define DIE_LOW_RANGE_BASE_DEGC			34
 #define DIE_LOW_RANGE_DELTA			16
@@ -107,9 +107,6 @@
 
 #define BARK_BITE_WDOG_PET_REG			(MISC_BASE + 0x43)
 #define BARK_BITE_WDOG_PET_BIT			BIT(0)
-
-#define CLOCK_REQUEST_REG			(MISC_BASE + 0x44)
-#define CLOCK_REQUEST_CMD_BIT			BIT(0)
 
 #define WD_CFG_REG				(MISC_BASE + 0x51)
 #define WATCHDOG_TRIGGER_AFP_EN_BIT		BIT(7)
@@ -258,9 +255,6 @@ enum {
 
 static bool is_secure(struct smb1355 *chip, int addr)
 {
-	if (addr == CLOCK_REQUEST_REG)
-		return true;
-
 	/* assume everything above 0xA0 is secure */
 	return (addr & 0xFF) >= 0xA0;
 }
@@ -274,25 +268,6 @@ static int smb1355_read(struct smb1355 *chip, u16 addr, u8 *val)
 	if (rc >= 0)
 		*val = (u8)temp;
 
-	return rc;
-}
-
-static int smb1355_masked_force_write(struct smb1355 *chip, u16 addr, u8 mask,
-					u8 val)
-{
-	int rc;
-
-	mutex_lock(&chip->write_lock);
-	if (is_secure(chip, addr)) {
-		rc = regmap_write(chip->regmap, (addr & 0xFF00) | 0xD0, 0xA5);
-		if (rc < 0)
-			goto unlock;
-	}
-
-	rc = regmap_write_bits(chip->regmap, addr, mask, val);
-
-unlock:
-	mutex_unlock(&chip->write_lock);
 	return rc;
 }
 
@@ -534,7 +509,6 @@ static enum power_supply_property smb1355_parallel_props[] = {
 	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMITED,
 	POWER_SUPPLY_PROP_MIN_ICL,
 	POWER_SUPPLY_PROP_CURRENT_MAX,
-	POWER_SUPPLY_PROP_SET_SHIP_MODE,
 	POWER_SUPPLY_PROP_DIE_HEALTH,
 };
 
@@ -694,10 +668,6 @@ static int smb1355_parallel_get_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_PARALLEL_FCC_MAX:
 		val->intval = chip->max_fcc;
 		break;
-	case POWER_SUPPLY_PROP_SET_SHIP_MODE:
-		/* Not in ship mode as long as device is active */
-		val->intval = 0;
-		break;
 	default:
 		pr_err_ratelimited("parallel psy get prop %d not supported\n",
 			prop);
@@ -792,20 +762,6 @@ static int smb1355_set_current_max(struct smb1355 *chip, int curr)
 	return rc;
 }
 
-static int smb1355_clk_request(struct smb1355 *chip, bool enable)
-{
-	int rc;
-
-	rc = smb1355_masked_force_write(chip, CLOCK_REQUEST_REG,
-				CLOCK_REQUEST_CMD_BIT,
-				enable ? CLOCK_REQUEST_CMD_BIT : 0);
-	if (rc < 0)
-		pr_err("Couldn't %s clock rc=%d\n",
-			       enable ? "enable" : "disable", rc);
-
-	return rc;
-}
-
 static int smb1355_parallel_set_prop(struct power_supply *psy,
 				     enum power_supply_property prop,
 				     const union power_supply_propval *val)
@@ -831,11 +787,6 @@ static int smb1355_parallel_set_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CONNECTOR_HEALTH:
 		chip->c_health = val->intval;
 		power_supply_changed(chip->parallel_psy);
-		break;
-	case POWER_SUPPLY_PROP_SET_SHIP_MODE:
-		if (!val->intval)
-			break;
-		rc = smb1355_clk_request(chip, false);
 		break;
 	default:
 		pr_debug("parallel power supply set prop %d not supported\n",
@@ -1016,11 +967,6 @@ static int smb1355_init_hw(struct smb1355 *chip)
 	int rc;
 	u8 val, range;
 
-	/* request clock always on */
-	rc = smb1355_clk_request(chip, true);
-	if (rc < 0)
-		return rc;
-
 	/* enable watchdog bark and bite interrupts, and disable the watchdog */
 	rc = smb1355_masked_write(chip, WD_CFG_REG, WDOG_TIMER_EN_BIT
 			| WDOG_TIMER_EN_ON_PLUGIN_BIT | BITE_WDOG_INT_EN_BIT
@@ -1092,7 +1038,7 @@ static int smb1355_init_hw(struct smb1355 *chip)
 				% DIE_LOW_RANGE_DELTA;
 
 		rc = smb1355_masked_write(chip, SMB2CHG_BATIF_ENG_SMISC_DIETEMP,
-				TDIE_COMPARATOR_THRESHOLD,
+			TDIE_COMPARATOR_THRESHOLD,
 				(range << DIE_LOW_RANGE_SHIFT) | val);
 		if (rc < 0) {
 			pr_err("Couldn't set temp comp threshold rc=%d\n", rc);
@@ -1444,8 +1390,6 @@ static void smb1355_shutdown(struct platform_device *pdev)
 	rc = smb1355_set_parallel_charging(chip, true);
 	if (rc < 0)
 		pr_err("Couldn't disable parallel path rc=%d\n", rc);
-
-	smb1355_clk_request(chip, false);
 }
 
 static struct platform_driver smb1355_driver = {

@@ -195,6 +195,7 @@ config FORTIFY_SOURCE
 	  where the compiler can determine and validate the buffer sizes.
 
 source security/selinux/Kconfig
+source security/hwselinux/Kconfig
 source security/smack/Kconfig
 source security/tomoyo/Kconfig
 source security/apparmor/Kconfig
@@ -239,6 +240,10 @@ config DEFAULT_SECURITY
 	default "tomoyo" if DEFAULT_SECURITY_TOMOYO
 	default "apparmor" if DEFAULT_SECURITY_APPARMOR
 	default "" if DEFAULT_SECURITY_DAC
+
+source security/kernel_harden/Kconfig
+source security/check_root/Kconfig
+source security/hw_root_scan/Kconfig
 
 endmenu
 

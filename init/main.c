@@ -88,8 +88,21 @@
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
 
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+#include <linux/hw_boottime.h>
+#endif
+
+#ifdef CONFIG_HUAWEI_BFM
+#include <chipset_common/bfmr/bfm/chipsets/bfm_chipsets.h>
+#include <chipset_common/bfmr/bfm/chipsets/qcom/bfm_qcom.h>
+#endif
 static int kernel_init(void *);
 
+/* AR0009CRQN yuanshuai 20170919 begin */
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+extern void log_boot(char *str);
+#endif
+/* AR0009CRQN yuanshuai 20170919 end */
 extern void init_IRQ(void);
 extern void fork_init(void);
 extern void radix_tree_init(void);
@@ -477,6 +490,30 @@ static void __init mm_init(void)
 	kaiser_init();
 }
 
+#ifdef CMDLINE_INFO_FILTER
+static void __init filter_args(char *cmdline) {
+	static char tmp_cmdline[COMMAND_LINE_SIZE] __initdata;
+	char *cmd_prefix = NULL;
+	char *cmd_suffix = NULL;
+	int len = 0;
+	if (cmdline == NULL) {
+		return;
+	}
+	strlcpy(tmp_cmdline, cmdline, COMMAND_LINE_SIZE);
+	cmd_prefix = strstr(tmp_cmdline, "androidboot.serialno");
+	if (cmd_prefix == NULL) {
+		pr_notice("Kernel command line: %s\n", tmp_cmdline);
+		return;
+	}
+	cmd_suffix = strstr(cmd_prefix, " ");
+	len = (cmd_suffix != NULL) ? (cmd_suffix - cmd_prefix)
+                             : (cmdline + strlen(cmdline) - cmd_prefix);
+	memset(cmd_prefix, '*', len);
+	pr_notice("Kernel command line: %s\n", tmp_cmdline);
+	return;
+}
+#endif
+
 asmlinkage __visible void __init start_kernel(void)
 {
 	char *command_line;
@@ -512,8 +549,9 @@ asmlinkage __visible void __init start_kernel(void)
 
 	build_all_zonelists(NULL, NULL);
 	page_alloc_init();
-
-	pr_notice("Kernel command line: %s\n", boot_command_line);
+#ifdef CMDLINE_INFO_FILTER
+	filter_args(boot_command_line);
+#endif
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
@@ -535,6 +573,10 @@ asmlinkage __visible void __init start_kernel(void)
 	sort_main_extable();
 	trap_init();
 	mm_init();
+
+#ifdef CONFIG_HUAWEI_BFM
+    hwboot_fail_init_struct();
+#endif
 
 	/*
 	 * Set up the scheduler prior starting any interrupts (such as the
@@ -773,9 +815,17 @@ int __init_or_module do_one_initcall(initcall_t fn)
 		return -EPERM;
 
 	if (initcall_debug)
+    {
 		ret = do_one_initcall_debug(fn);
+    }
 	else
+    {
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+		ret = do_boottime_initcall(fn);
+#else
 		ret = fn();
+#endif
+    }
 
 	msgbuf[0] = 0;
 
@@ -948,6 +998,12 @@ static int __ref kernel_init(void *unused)
 	numa_default_policy();
 
 	rcu_end_inkernel_boot();
+
+/* AR0009CRQN yuanshuai 20170919 begin */
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+        log_boot("[INFOR] Kernel_init_done");
+#endif
+/* AR0009CRQN yuanshuai 20170919 end */
 
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);

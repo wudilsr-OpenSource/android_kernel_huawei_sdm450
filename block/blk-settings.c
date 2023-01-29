@@ -78,6 +78,18 @@ void blk_queue_lld_busy(struct request_queue *q, lld_busy_fn *fn)
 EXPORT_SYMBOL_GPL(blk_queue_lld_busy);
 
 /**
+ * blk_urgent_request() - Set an urgent_request handler function for queue
+ * @q:         queue
+ * @fn:                handler for urgent requests
+ *
+*/
+void blk_urgent_request(struct request_queue *q, request_fn_proc *fn)
+{
+       q->urgent_request_fn = fn;
+}
+EXPORT_SYMBOL(blk_urgent_request);
+
+/**
  * blk_set_default_limits - reset limits to default values
  * @lim:  the queue_limits structure to reset
  *
@@ -830,6 +842,19 @@ void blk_queue_flush_queueable(struct request_queue *q, bool queueable)
 	spin_unlock_irq(q->queue_lock);
 }
 EXPORT_SYMBOL_GPL(blk_queue_flush_queueable);
+
+/**
+ * blk_set_queue_depth - tell the block layer about the device queue depth
+ * @q:          the request queue for the device
+ * @depth:      queue depth
+ *
+ */
+void blk_set_queue_depth(struct request_queue *q, unsigned int depth)
+{
+	q->queue_depth = depth;
+	wbt_set_queue_depth(q->rq_wb, depth);
+}
+EXPORT_SYMBOL(blk_set_queue_depth);
 
 /**
  * blk_queue_write_cache - configure queue's write cache

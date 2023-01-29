@@ -16,6 +16,47 @@
 
 #include <linux/device.h>
 #include <linux/sched.h>
+#ifdef CONFIG_HUAWEI_WIFI
+
+extern  int wlan_log_debug_mask;
+#define WLAN_ERROR  1
+#define WLAN_INFO 2
+#define WLAN_DBG  3
+
+#ifndef wlan_log_err
+#define wlan_log_err(x...)                \
+do{                                     \
+    if( wlan_log_debug_mask >= WLAN_ERROR )   \
+    {                                   \
+        printk(KERN_ERR "wlan:" x); \
+    }                                   \
+                                        \
+}while(0)
+#endif
+
+#ifndef wlan_log_info
+#define wlan_log_info(x...)               \
+do{                                     \
+    if( wlan_log_debug_mask >= WLAN_INFO)  \
+    {                                   \
+        printk(KERN_ERR "wlan:" x); \
+    }                                   \
+                                        \
+}while(0)
+#endif
+
+#ifndef wlan_log_debug
+#define wlan_log_debug(x...)              \
+do{                                     \
+    if ( wlan_log_debug_mask >= WLAN_DBG )   \
+    {                                   \
+        printk(KERN_ERR "wlan:" x); \
+    }                                   \
+                                        \
+}while(0)
+#endif
+
+#endif
 
 #define IRIS_REGULATORS		4
 #define PRONTO_REGULATORS	3
@@ -61,13 +102,6 @@ enum {
 	WCNSS_WLAN_SET,
 	WCNSS_WLAN_CLK,
 	WCNSS_WLAN_MAX_GPIO,
-};
-
-enum wcnss_log_type {
-	ERR,
-	WARN,
-	INFO,
-	DBG,
 };
 
 #define WCNSS_VBATT_THRESHOLD           3500000
@@ -139,6 +173,7 @@ int wcnss_device_ready(void);
 bool wcnss_cbc_complete(void);
 int wcnss_device_is_shutdown(void);
 void wcnss_riva_dump_pmic_regs(void);
+void wcnss_free_regulator(void);
 int wcnss_xo_auto_detect_enabled(void);
 u32 wcnss_get_wlan_rx_buff_count(void);
 int wcnss_wlan_iris_xo_mode(void);
@@ -152,7 +187,6 @@ void wcnss_dump_stack(struct task_struct *task);
 void wcnss_snoc_vote(bool clk_chk_en);
 int wcnss_parse_voltage_regulator(struct wcnss_wlan_config *wlan_config,
 				  struct device *dev);
-void wcnss_log(enum wcnss_log_type type, const char *_fmt, ...);
 
 #ifdef CONFIG_WCNSS_REGISTER_DUMP_ON_BITE
 void wcnss_log_debug_regs_on_bite(void);

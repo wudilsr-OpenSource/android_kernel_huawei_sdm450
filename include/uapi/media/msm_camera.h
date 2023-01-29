@@ -276,7 +276,7 @@ struct msm_mctl_post_proc_cmd {
 #define MAX_ACTUATOR_REGION 5
 #define MAX_ACTUATOR_INIT_SET 12
 #define MAX_ACTUATOR_TYPE_SIZE 32
-#define MAX_ACTUATOR_REG_TBL_SIZE 8
+#define MAX_ACTUATOR_REG_TBL_SIZE 16
 
 
 #define MSM_MAX_CAMERA_CONFIGS 2
@@ -1717,6 +1717,13 @@ enum msm_actuator_addr_type {
 	MSM_ACTUATOR_WORD_ADDR,
 };
 
+enum msm_actuator_condition_type {
+	MSM_ACTUATOR_EQUAL,
+	MSM_ACTUATOR_UNEQUAL,
+	MSM_ACTUATOR_GREATER,
+	MSM_ACTUATOR_LESS,
+};
+
 enum msm_actuator_write_type {
 	MSM_ACTUATOR_WRITE_HW_DAMP,
 	MSM_ACTUATOR_WRITE_DAC,
@@ -1724,10 +1731,13 @@ enum msm_actuator_write_type {
 	MSM_ACTUATOR_WRITE_DIR_REG,
 	MSM_ACTUATOR_POLL,
 	MSM_ACTUATOR_READ_WRITE,
+	MSM_ACTUATOR_READ_CONDITION,
+	MSM_ACTUATOR_WRITE_CONDITION,
 };
 
 struct msm_actuator_reg_params_t {
 	enum msm_actuator_write_type reg_write_type;
+	enum msm_actuator_condition_type read_condition;
 	uint32_t hw_mask;
 	uint16_t reg_addr;
 	uint16_t hw_shift;

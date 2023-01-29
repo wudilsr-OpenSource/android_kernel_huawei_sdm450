@@ -242,6 +242,9 @@ void *removed_alloc(struct device *dev, size_t size, dma_addr_t *handle,
 
 
 	mutex_lock(&dma_mem->lock);
+	if (unlikely(size > (dma_mem->nr_pages << PAGE_SHIFT)))
+		goto out;
+
 	pageno = bitmap_find_next_zero_area(dma_mem->bitmap, dma_mem->nr_pages,
 						0, nbits, align);
 

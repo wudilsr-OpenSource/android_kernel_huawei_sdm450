@@ -39,7 +39,9 @@
 #include <linux/init.h>
 #include <linux/show_mem_notifier.h>
 #include <linux/mmu_notifier.h>
-
+#ifdef CONFIG_FASTBOOT_DUMP
+#include <linux/fastboot_dump_reason_api.h>
+#endif
 #include <asm/tlb.h>
 #include "internal.h"
 
@@ -1058,6 +1060,10 @@ bool out_of_memory(struct oom_control *oc)
 	select_bad_process(oc);
 	/* Found nothing?!?! Either we hang forever, or we panic. */
 	if (!oc->chosen && !is_sysrq_oom(oc) && !is_memcg_oom(oc)) {
+#ifdef CONFIG_FASTBOOT_DUMP
+		fastboot_dump_s_reason_set(FD_S_APANIC_OUT_OF_MEMORY);
+		fastboot_dump_s_reason_str_set("Out_of_memory");
+#endif
 		dump_header(oc, NULL);
 		panic("Out of memory and no killable processes...\n");
 	}

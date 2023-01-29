@@ -82,4 +82,7 @@ endif
 obj-$(CONFIG_QRTR)		+= qrtr/
 obj-$(CONFIG_NET_NCSI)		+= ncsi/
 obj-$(CONFIG_RMNET_DATA) += rmnet_data/
+obj-$(CONFIG_HW_NETWORK_AWARE)  += network_aware/
+obj-$(CONFIG_HW_DPIMARK_MODULE) += hw_dpi_mark/
 obj-$(CONFIG_IPC_ROUTER)	+= ipc_router/
+obj-$(CONFIG_CHR_NETLINK_MODULE) += chr/

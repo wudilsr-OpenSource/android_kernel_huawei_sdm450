@@ -542,6 +542,15 @@ struct mmc_host {
 	unsigned int		retune_period;	/* re-tuning period in secs */
 	struct timer_list	retune_timer;	/* for periodic re-tuning */
 
+#ifdef CONFIG_HUAWEI_QCOM_MMC
+	unsigned int         mmc_enter_ioctl_multi_cmd;
+#endif
+#ifdef CONFIG_HUAWEI_QCOM_MMC
+	unsigned int         sd_acmd41_timeout_cnt;
+	unsigned int         change_slot;	/*sd slot change*/
+	unsigned int         sd_init_retry_cnt;
+	unsigned int         sd_present;
+#endif
 	bool			trigger_card_event; /* card_event necessary */
 
 	struct mmc_card		*card;		/* device attached to this host */
@@ -623,6 +632,10 @@ struct mmc_host {
 	struct extcon_dev	*extcon;
 	struct notifier_block card_detect_nb;
 
+#ifdef CONFIG_HUAWEI_QCOM_MMC
+	unsigned int		crc_count;
+#endif
+
 #ifdef CONFIG_MMC_PERF_PROFILING
 	struct {
 
@@ -690,7 +703,6 @@ static inline void *mmc_cmdq_private(struct mmc_host *host)
 #define mmc_bus_manual_resume(host) ((host)->bus_resume_flags & \
 				MMC_BUSRESUME_MANUAL_RESUME)
 
-#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 static inline void mmc_set_bus_resume_policy(struct mmc_host *host, int manual)
 {
 	if (manual)
@@ -698,11 +710,6 @@ static inline void mmc_set_bus_resume_policy(struct mmc_host *host, int manual)
 	else
 		host->bus_resume_flags &= ~MMC_BUSRESUME_MANUAL_RESUME;
 }
-#else
-static inline void mmc_set_bus_resume_policy(struct mmc_host *host, int manual)
-{
-}
-#endif
 
 extern int mmc_resume_bus(struct mmc_host *host);
 

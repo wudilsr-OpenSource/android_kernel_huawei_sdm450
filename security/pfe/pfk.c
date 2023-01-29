@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -57,6 +57,7 @@
 #include "pfk_ice.h"
 #include "pfk_ext4.h"
 #include "pfk_internal.h"
+#include "pfk_f2fs.h"
 #include "ext4.h"
 
 static bool pfk_ready;
@@ -66,8 +67,10 @@ static bool pfk_ready;
 #define PFK_SUPPORTED_KEY_SIZE 32
 #define PFK_SUPPORTED_SALT_SIZE 32
 
+extern bool is_platform_hardware_fbe_enabled(void);
+
 /* Various PFE types and function tables to support each one of them */
-enum pfe_type {EXT4_CRYPT_PFE, INVALID_PFE};
+enum pfe_type {EXT4_CRYPT_PFE, F2FS_CRYPT_PFE, INVALID_PFE};
 
 typedef int (*pfk_parse_inode_type)(const struct bio *bio,
 	const struct inode *inode,
@@ -81,16 +84,19 @@ typedef bool (*pfk_allow_merge_bio_type)(const struct bio *bio1,
 
 static const pfk_parse_inode_type pfk_parse_inode_ftable[] = {
 	/* EXT4_CRYPT_PFE */ &pfk_ext4_parse_inode,
+	/* F2FS_CRYPT_PFE */ &pfk_f2fs_parse_inode,
 };
 
 static const pfk_allow_merge_bio_type pfk_allow_merge_bio_ftable[] = {
 	/* EXT4_CRYPT_PFE */ &pfk_ext4_allow_merge_bio,
+	/* F2FS_CRYPT_PFE */ &pfk_f2fs_allow_merge_bio,
 };
 
 static void __exit pfk_exit(void)
 {
 	pfk_ready = false;
 	pfk_ext4_deinit();
+	pfk_f2fs_deinit();
 	pfk_kc_deinit();
 }
 
@@ -103,10 +109,18 @@ static int __init pfk_init(void)
 	if (ret != 0)
 		goto fail;
 
+	ret = pfk_f2fs_init();
+	if (ret != 0) {
+		pr_err("could not init pfk for f2fs, err %d\n", ret);
+		pfk_ext4_deinit();
+		goto fail;
+	}
+
 	ret = pfk_kc_init();
 	if (ret != 0) {
 		pr_err("could init pfk key cache, error %d\n", ret);
 		pfk_ext4_deinit();
+		pfk_f2fs_deinit();
 		goto fail;
 	}
 
@@ -131,6 +145,9 @@ static enum pfe_type pfk_get_pfe_type(const struct inode *inode)
 
 	if (pfk_is_ext4_type(inode))
 		return EXT4_CRYPT_PFE;
+
+	if (pfk_is_f2fs_type(inode))
+		return F2FS_CRYPT_PFE;
 
 	return INVALID_PFE;
 }
@@ -309,13 +326,13 @@ int pfk_load_key_start(const struct bio *bio,
 		pr_err("ice setting is NULL\n");
 		return -EINVAL;
 	}
-
+//pr_err("%s %d\n", __func__, __LINE__);
 	inode = pfk_bio_get_inode(bio);
 	if (!inode) {
 		*is_pfe = false;
 		return -EINVAL;
 	}
-
+    //pr_err("%s %d\n", __func__, __LINE__);
 	which_pfe = pfk_get_pfe_type(inode);
 	if (which_pfe == INVALID_PFE) {
 		*is_pfe = false;
@@ -324,16 +341,16 @@ int pfk_load_key_start(const struct bio *bio,
 
 	pr_debug("parsing file %s with PFE %d\n",
 		inode_to_filename(inode), which_pfe);
-
+//pr_err("%s %d\n", __func__, __LINE__);
 	ret = (*(pfk_parse_inode_ftable[which_pfe]))
 			(bio, inode, &key_info, &algo_mode, is_pfe);
 	if (ret != 0)
 		return ret;
-
+//pr_err("%s %d\n", __func__, __LINE__);
 	ret = pfk_key_size_to_key_type(key_info.key_size, &key_size_type);
 	if (ret != 0)
 		return ret;
-
+//pr_err("%s %d\n", __func__, __LINE__);
 	ret = pfk_kc_load_key_start(key_info.key, key_info.key_size,
 			key_info.salt, key_info.salt_size, &key_index, async);
 	if (ret) {
@@ -350,8 +367,8 @@ int pfk_load_key_start(const struct bio *bio,
 	ice_setting->key_mode = ICE_CRYPTO_USE_LUT_SW_KEY;
 	ice_setting->key_index = key_index;
 
-	pr_debug("loaded key for file %s key_index %d\n",
-		inode_to_filename(inode), key_index);
+	pr_debug("loaded key for file %s key_index %d with PFE %d\n",
+		inode_to_filename(inode), key_index, which_pfe);
 
 	return 0;
 }
@@ -370,7 +387,7 @@ int pfk_load_key_start(const struct bio *bio,
 int pfk_load_key_end(const struct bio *bio, bool *is_pfe)
 {
 	int ret = 0;
-	struct pfk_key_info key_info = {NULL, NULL, 0, 0};
+	struct pfk_key_info key_info = {0};
 	enum pfe_type which_pfe = INVALID_PFE;
 	struct inode *inode = NULL;
 
@@ -435,6 +452,10 @@ bool pfk_allow_merge_bio(const struct bio *bio1, const struct bio *bio2)
 	struct inode *inode2 = NULL;
 	enum pfe_type which_pfe1 = INVALID_PFE;
 	enum pfe_type which_pfe2 = INVALID_PFE;
+
+	if(!is_platform_hardware_fbe_enabled()) {
+		return true;
+	}
 
 	if (!pfk_is_ready())
 		return false;

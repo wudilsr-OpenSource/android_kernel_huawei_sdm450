@@ -99,6 +99,9 @@ enum dsi_panel_bl_ctrl {
 	BL_PWM,
 	BL_WLED,
 	BL_DCS_CMD,
+#ifdef CONFIG_LCDKIT_DRIVER
+	BL_IC_TI,
+#endif
 	UNKNOWN_CTRL,
 };
 
@@ -407,7 +410,7 @@ struct mdss_dsi_ctrl_pdata {
 	int (*cmdlist_commit)(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp);
 	void (*switch_mode)(struct mdss_panel_data *pdata, int mode);
 	struct mdss_panel_data panel_data;
-	unsigned char __iomem *ctrl_base;
+	unsigned char *ctrl_base;
 	struct mdss_io_data ctrl_io;
 	struct mdss_io_data mmss_misc_io;
 	struct mdss_io_data phy_io;
@@ -431,13 +434,17 @@ struct mdss_dsi_ctrl_pdata {
 	int irq_cnt;
 	int disp_te_gpio;
 	int rst_gpio;
+	int tp_rst_gpio;
 	int disp_en_gpio;
+
+	#ifdef CONFIG_LCDKIT_DRIVER
+	int disp_bl_gpio;
+	#endif
+
 	int bklt_en_gpio;
 	int mode_gpio;
 	int intf_mux_gpio;
-	bool bklt_en_gpio_invert;
 	int bklt_ctrl;	/* backlight ctrl */
-	enum dsi_ctrl_op_mode bklt_dcs_op_mode; /* backlight dcs ctrl mode */
 	bool pwm_pmi;
 	int pwm_period;
 	int pwm_pmic_gpio;
@@ -682,7 +689,6 @@ void mdss_dsi_set_reg(struct mdss_dsi_ctrl_pdata *ctrl, int off,
 	u32 mask, u32 val);
 int mdss_dsi_phy_pll_reset_status(struct mdss_dsi_ctrl_pdata *ctrl);
 int mdss_dsi_panel_power_ctrl(struct mdss_panel_data *pdata, int power_state);
-void mdss_dsi_ctrl_phy_reset(struct mdss_dsi_ctrl_pdata *ctrl);
 
 static inline const char *__mdss_dsi_pm_name(enum dsi_pm_type module)
 {

@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -345,7 +345,7 @@ static inline void etm_mm_save_state(struct etm_ctx *etmdata)
 						       TRCCNTVRn(j));
 		}
 		/* resource selection registers */
-		for (j = 0; j < etmdata->nr_resource * 2; j++)
+		for (j = 0; j < etmdata->nr_resource; j++)
 			etmdata->state[i++] = etm_readl(etmdata, TRCRSCTLRn(j));
 		/* comparator registers */
 		for (j = 0; j < etmdata->nr_addr_cmp * 2; j++) {
@@ -448,7 +448,7 @@ static inline void etm_mm_restore_state(struct etm_ctx *etmdata)
 			etm_writel(etmdata, etmdata->state[i++], TRCCNTVRn(j));
 		}
 		/* resource selection registers */
-		for (j = 0; j < etmdata->nr_resource * 2; j++)
+		for (j = 0; j < etmdata->nr_resource; j++)
 			etm_writel(etmdata, etmdata->state[i++], TRCRSCTLRn(j));
 		/* comparator registers */
 		for (j = 0; j < etmdata->nr_addr_cmp * 2; j++) {
@@ -932,7 +932,7 @@ static inline void etm_si_save_state(struct etm_ctx *etmdata)
 		for (j = 0; j < etmdata->nr_cntr; j++)
 			i = etm_read_crxr(etmdata->state, i, j);
 		/* resource selection registers */
-		for (j = 0; j < etmdata->nr_resource * 2; j++)
+		for (j = 0; j < etmdata->nr_resource; j++)
 			i = etm_read_rsxr(etmdata->state, i, j + 2);
 		/* comparator registers */
 		for (j = 0; j < etmdata->nr_addr_cmp * 2; j++)
@@ -1387,7 +1387,7 @@ static inline void etm_si_restore_state(struct etm_ctx *etmdata)
 		for (j = 0; j < etmdata->nr_cntr; j++)
 			i = etm_write_crxr(etmdata->state, i, j);
 		/* resource selection registers */
-		for (j = 0; j < etmdata->nr_resource * 2; j++)
+		for (j = 0; j < etmdata->nr_resource; j++)
 			i = etm_write_rsxr(etmdata->state, i, j + 2);
 		/* comparator registers */
 		for (j = 0; j < etmdata->nr_addr_cmp * 2; j++)
@@ -1480,23 +1480,24 @@ static void etm_os_lock_init(struct etm_ctx *etmdata)
 		etmdata->os_lock_present = false;
 }
 
+/*it will detect the device is secure or not before access ETM resource */
 static bool coresight_authstatus_enabled(void __iomem *addr)
 {
 	int ret;
 	unsigned int auth_val;
 
 	if (!addr)
-		return false;
+	return false;
 
 	auth_val = readl_relaxed(addr + TRCAUTHSTATUS);
 
 	if ((BMVAL(auth_val, 0, 1) == 0x2) ||
-	    (BMVAL(auth_val, 2, 3) == 0x2) ||
-	    (BMVAL(auth_val, 4, 5) == 0x2) ||
-	    (BMVAL(auth_val, 6, 7) == 0x2))
-		ret = false;
+	(BMVAL(auth_val, 2, 3) == 0x2) ||
+	(BMVAL(auth_val, 4, 5) == 0x2) ||
+	(BMVAL(auth_val, 6, 7) == 0x2))
+	ret = false;
 	else
-		ret = true;
+	ret = true;
 
 	return ret;
 }
@@ -1509,7 +1510,7 @@ static void etm_init_arch_data(void *info)
 	ETM_UNLOCK(etmdata);
 
 	if (!coresight_authstatus_enabled(etmdata->base))
-		goto out;
+	goto out;
 
 	etm_os_lock_init(etmdata);
 
@@ -1520,7 +1521,7 @@ static void etm_init_arch_data(void *info)
 	val = etm_readl(etmdata, TRCIDR4);
 	etmdata->nr_addr_cmp = BMVAL(val, 0, 3);
 	etmdata->nr_data_cmp = BMVAL(val, 4, 7);
-	etmdata->nr_resource = BMVAL(val, 16, 19) + 1;
+	etmdata->nr_resource = BMVAL(val, 16, 19);
 	etmdata->nr_ss_cmp = BMVAL(val, 20, 23);
 	etmdata->nr_ctxid_cmp = BMVAL(val, 24, 27);
 	etmdata->nr_vmid_cmp = BMVAL(val, 28, 31);

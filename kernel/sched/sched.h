@@ -878,6 +878,12 @@ struct rq {
 	struct cpuidle_state *idle_state;
 	int idle_state_idx;
 #endif
+#ifdef CONFIG_HW_VIP_THREAD
+	/*task list for vip thread*/
+	struct list_head vip_thread_list;
+	int active_vip_balance;
+	struct cpu_stop_work vip_balance_work;
+#endif
 };
 
 static inline int cpu_of(struct rq *rq)
@@ -1228,7 +1234,9 @@ extern struct static_key sched_feat_keys[__SCHED_FEAT_NR];
 #endif /* SCHED_DEBUG && HAVE_JUMP_LABEL */
 
 extern struct static_key_false sched_numa_balancing;
-extern struct static_key_false sched_schedstats;
+// AR000AK4LG fix sched_blocked_reason bug for qcom begin
+extern struct static_key_true sched_schedstats;
+// AR000AK4LG fix sched_blocked_reason bug for qcom end
 
 static inline u64 global_rt_period(void)
 {
@@ -2321,7 +2329,7 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags)
 	data = rcu_dereference_sched(*per_cpu_ptr(&cpufreq_update_util_data,
 					cpu_of(rq)));
 	if (data)
-		data->func(data, sched_ktime_clock(), flags);
+                data->func(data, sched_ktime_clock(), flags);
 }
 
 static inline void cpufreq_update_this_cpu(struct rq *rq, unsigned int flags)

@@ -303,7 +303,8 @@ update_window_start(struct rq *rq, u64 wallclock, int event)
 	u64 old_window_start = rq->window_start;
 
 	delta = wallclock - rq->window_start;
-	BUG_ON(delta < 0);
+
+        BUG_ON(delta < 0);
 	if (delta < sched_ravg_window)
 		return old_window_start;
 
@@ -389,13 +390,6 @@ void sched_account_irqstart(int cpu, struct task_struct *curr, u64 wallclock)
 	struct rq *rq = cpu_rq(cpu);
 
 	if (!rq->window_start || sched_disable_window_stats)
-		return;
-
-	/*
-	 * We don’t have to note down an irqstart event when cycle
-	 * counter is not used.
-	 */
-	if (!use_cycle_counter)
 		return;
 
 	if (is_idle_task(curr)) {
@@ -700,14 +694,18 @@ static inline void inter_cluster_migration_fixup
 	BUG_ON((s64)src_rq->nt_curr_runnable_sum < 0);
 }
 
-static int load_to_index(u32 load)
+static u32 load_to_index(u32 load)
 {
+	/*
 	if (load < sched_load_granule)
 		return 0;
 	else if (load >= sched_ravg_window)
 		return NUM_LOAD_INDICES - 1;
 	else
 		return load / sched_load_granule;
+	*/
+	u32 index = load / sched_load_granule;
+	return min(index, (u32)(NUM_LOAD_INDICES - 1));
 }
 
 static void

@@ -309,26 +309,35 @@ int qg_write_monotonic_soc(struct qpnp_qg *chip, int msoc)
 	return rc;
 }
 
+#define WA_BATT_TEMP_PRE	250
+#define WA_BATT_TEMP_THR	980
 int qg_get_battery_temp(struct qpnp_qg *chip, int *temp)
 {
 	int rc = 0;
 	struct qpnp_vadc_result result;
+	static int pre_temp = WA_BATT_TEMP_PRE;
 
 	if (chip->battery_missing) {
 		*temp = 250;
 		return 0;
 	}
 
-	rc = qpnp_vadc_read(chip->vadc_dev, VADC_BAT_THERM_PU2, &result);
+	rc = qpnp_vadc_read(chip->vadc_dev, VADC_BAT_THERM_PU1, &result);
 	if (rc) {
 		pr_err("Failed reading adc channel=%d, rc=%d\n",
-					VADC_BAT_THERM_PU2, rc);
+					VADC_BAT_THERM_PU1, rc);
 		return rc;
 	}
 	pr_debug("batt_temp = %lld meas = 0x%llx\n",
 			result.physical, result.measurement);
 
 	*temp = (int)result.physical;
+	if(*temp < WA_BATT_TEMP_THR){
+		pre_temp = *temp;
+	}else{
+		pr_info("enter WA and temp = %d\n",*temp);
+		*temp = pre_temp;
+	}
 
 	return rc;
 }
@@ -336,6 +345,7 @@ int qg_get_battery_temp(struct qpnp_qg *chip, int *temp)
 int qg_get_battery_current(struct qpnp_qg *chip, int *ibat_ua)
 {
 	int rc = 0, last_ibat = 0;
+	u32 fifo_length = 0;
 
 	if (chip->battery_missing) {
 		*ibat_ua = 0;

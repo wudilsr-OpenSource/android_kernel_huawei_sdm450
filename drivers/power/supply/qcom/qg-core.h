@@ -120,12 +120,7 @@ struct qpnp_qg {
 	bool			charge_full;
 	int			charge_status;
 	int			charge_type;
-	int			chg_iterm_ma;
 	int			next_wakeup_ms;
-	int			esr_actual;
-	int			esr_nominal;
-	int			soh;
-	int			soc_reporting_ready;
 	u32			fifo_done_count;
 	u32			wa_flags;
 	u32			seq_no;
@@ -143,7 +138,6 @@ struct qpnp_qg {
 	int			pon_soc;
 	int			batt_soc;
 	int			cc_soc;
-	int			full_soc;
 	int			sys_soc;
 	int			last_adj_ssoc;
 	int			recharge_soc;
@@ -157,8 +151,6 @@ struct qpnp_qg {
 	struct cap_learning	*cl;
 	/* charge counter */
 	struct cycle_counter	*counter;
-	/* ttf */
-	struct ttf		*ttf;
 };
 
 struct ocv_all {
@@ -166,6 +158,7 @@ struct ocv_all {
 	u32 ocv_raw;
 	char ocv_type[20];
 };
+
 
 enum ocv_type {
 	S7_PON_OCV,

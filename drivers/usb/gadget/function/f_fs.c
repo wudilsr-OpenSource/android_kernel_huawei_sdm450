@@ -43,7 +43,7 @@
 #define FUNCTIONFS_MAGIC	0xa647361 /* Chosen by a honest dice roll ;) */
 
 #define NUM_PAGES	10 /* # of pages for ipc logging */
-
+#define HDB_NAME "hdb"
 static void *ffs_ipc_log;
 #define ffs_log(fmt, ...) do { \
 	ipc_log_string(ffs_ipc_log, "%s: " fmt,  __func__, \
@@ -501,6 +501,7 @@ done_spin:
 			ret = __ffs_ep0_queue_wait(ffs, data, len);
 		}
 		kfree(data);
+		data=NULL;
 		break;
 
 	default:
@@ -663,7 +664,7 @@ done_mutex:
 
 	mutex_unlock(&ffs->mutex);
 	kfree(data);
-
+	data=NULL;
 	return ret;
 }
 
@@ -871,9 +872,13 @@ static void ffs_user_copy_worker(struct work_struct *work)
 	ffs_log("enter: ret %d", ret);
 
 	if (io_data->read && ret > 0) {
+		mm_segment_t oldfs = get_fs();
+
+		set_fs(USER_DS);
 		use_mm(io_data->mm);
 		ret = ffs_copy_to_iter(io_data->buf, ret, &io_data->data);
 		unuse_mm(io_data->mm);
+		set_fs(oldfs);
 	}
 
 	io_data->kiocb->ki_complete(io_data->kiocb, ret, ret);
@@ -1242,7 +1247,7 @@ error_mutex:
 	mutex_unlock(&epfile->mutex);
 error:
 	kfree(data);
-
+	data=NULL;
 	ffs_log("exit: ret %zu", ret);
 
 	return ret;
@@ -3410,8 +3415,8 @@ static int _ffs_func_bind(struct usb_configuration *c,
 	struct ffs_data *ffs = func->ffs;
 
 	const int full = !!func->ffs->fs_descs_count;
-	const int high = func->ffs->hs_descs_count;
-	const int super = func->ffs->ss_descs_count;
+	const int high = !!func->ffs->hs_descs_count;
+	const int super = !!func->ffs->ss_descs_count;
 
 	int fs_len, hs_len, ss_len, ret, i;
 	struct ffs_ep *eps_ptr;
@@ -3729,7 +3734,7 @@ static int ffs_func_setup(struct usb_function *f,
 
 	ffs_log("exit");
 
-	return 0;
+	return USB_GADGET_DELAYED_STATUS;
 }
 
 static bool ffs_func_req_match(struct usb_function *f,
@@ -4056,10 +4061,12 @@ static int ffs_set_inst_name(struct usb_function_instance *fi, const char *name)
 	mutex_lock(&inst_status->ffs_lock);
 	opts_prev = inst_status->opts;
 	if (opts_prev) {
+		if(strncmp(name,HDB_NAME,strlen(HDB_NAME))){
 		mutex_unlock(&inst_status->ffs_lock);
 		ffs_log("instance (%s): prev inst do not freed yet\n",
 				inst_status->inst_name);
 		return -EBUSY;
+		}
 	}
 	mutex_unlock(&inst_status->ffs_lock);
 
@@ -4095,8 +4102,11 @@ static int ffs_set_inst_name(struct usb_function_instance *fi, const char *name)
 	kfree(tmp);
 
 	mutex_lock(&inst_status->ffs_lock);
-	inst_status->inst_exist = true;
-	inst_status->opts = opts;
+	if(inst_status->opts == NULL)
+	{
+			inst_status->inst_exist = true;
+			inst_status->opts = opts;	
+	}
 	mutex_unlock(&inst_status->ffs_lock);
 
 	return 0;
@@ -4493,6 +4503,7 @@ static char *ffs_prepare_buffer(const char __user *buf, size_t len,
 
 	if (unlikely(copy_from_user(data, buf, len))) {
 		kfree(data);
+		data=NULL;
 		return ERR_PTR(-EFAULT);
 	}
 

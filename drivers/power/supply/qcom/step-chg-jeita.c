@@ -23,6 +23,7 @@
 #define MAX_STEP_CHG_ENTRIES	8
 #define STEP_CHG_VOTER		"STEP_CHG_VOTER"
 #define JEITA_VOTER		"JEITA_VOTER"
+#define BATT_PROFILE_VOTER "BATT_PROFILE_VOTER"
 
 #define is_between(left, right, value) \
 		(((left) >= (right) && (left) >= (value) \
@@ -90,6 +91,7 @@ struct step_chg_info {
 static struct step_chg_info *the_chip;
 
 #define STEP_CHG_HYSTERISIS_DELAY_US		5000000 /* 5 secs */
+#define BASP_CHG_FLOAT_VOLTAGE_UV		4200000
 
 #define BATT_HOT_DECIDEGREE_MAX			600
 #define GET_CONFIG_DELAY_MS		2000
@@ -99,7 +101,7 @@ static struct step_chg_info *the_chip;
 static bool is_batt_available(struct step_chg_info *chip)
 {
 	if (!chip->batt_psy)
-		chip->batt_psy = power_supply_get_by_name("battery");
+		chip->batt_psy = power_supply_get_by_name("bk_battery");
 
 	if (!chip->batt_psy)
 		return false;
@@ -282,6 +284,12 @@ static int get_step_chg_jeita_setting_from_profile(struct step_chg_info *chip)
 		chip->sw_jeita_cfg_valid = false;
 	}
 
+#ifdef CONFIG_HLTHERM_RUNTEST
+/*config sw-jeita threshold:hard hot = 60, hard cold = -20*/
+	chip->jeita_fcc_config->fcc_cfg[0].low_threshold = -200;
+	chip->jeita_fcc_config->fcc_cfg[3].high_threshold = 600;
+#endif
+
 	rc = read_range_data_from_node(profile_node,
 			"qcom,jeita-fv-ranges",
 			chip->jeita_fv_config->fv_cfg,
@@ -348,46 +356,17 @@ static int get_val(struct range_data *range, int hysteresis, int current_index,
 	int i;
 
 	*new_index = -EINVAL;
-
-	/*
-	 * If the threshold is lesser than the minimum allowed range,
-	 * return -ENODATA.
-	 */
-	if (threshold < range[0].low_threshold)
-		return -ENODATA;
-
-	/* First try to find the matching index without hysteresis */
-	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++) {
-		if (!range[i].high_threshold && !range[i].low_threshold) {
-			/* First invalid table entry; exit loop */
-			break;
-		}
-
+	/* first find the matching index without hysteresis */
+	for (i = 0; i < MAX_STEP_CHG_ENTRIES; i++)
 		if (is_between(range[i].low_threshold,
 			range[i].high_threshold, threshold)) {
 			*new_index = i;
 			*val = range[i].value;
-			break;
-		}
-	}
-
-	/*
-	 * If nothing was found, the threshold exceeds the max range for sure
-	 * as the other case where it is lesser than the min range is handled
-	 * at the very beginning of this function. Therefore, clip it to the
-	 * max allowed range value, which is the one corresponding to the last
-	 * valid entry in the battery profile data array.
-	 */
-	if (*new_index == -EINVAL) {
-		if (i == 0) {
-			/* Battery profile data array is completely invalid */
-			return -ENODATA;
 		}
 
-		*new_index = (i - 1);
-		*val = range[*new_index].value;
-	}
-
+	/* if nothing was found, return -ENODATA */
+	if (*new_index == -EINVAL)
+		return -ENODATA;
 	/*
 	 * If we don't have a current_index return this
 	 * newfound value. There is no hysterisis from out of range
@@ -400,16 +379,7 @@ static int get_val(struct range_data *range, int hysteresis, int current_index,
 	 * Check for hysteresis if it in the neighbourhood
 	 * of our current index.
 	 */
-	if (*new_index == current_index + 1) {
-		if (threshold < range[*new_index].low_threshold + hysteresis) {
-			/*
-			 * Stay in the current index, threshold is not higher
-			 * by hysteresis amount
-			 */
-			*new_index = current_index;
-			*val = range[current_index].value;
-		}
-	} else if (*new_index == current_index - 1) {
+	if (*new_index == current_index - 1) {
 		if (threshold > range[*new_index].high_threshold - hysteresis) {
 			/*
 			 * stay in the current index, threshold is not lower
@@ -502,7 +472,7 @@ static int handle_jeita(struct step_chg_info *chip)
 		if (chip->fcc_votable)
 			vote(chip->fcc_votable, JEITA_VOTER, false, 0);
 		if (chip->fv_votable)
-			vote(chip->fv_votable, JEITA_VOTER, false, 0);
+			vote(chip->fv_votable, BATT_PROFILE_VOTER, false, 0);
 		return 0;
 	}
 
@@ -548,7 +518,7 @@ static int handle_jeita(struct step_chg_info *chip)
 	if (rc < 0) {
 		/* remove the vote if no step-based fcc is found */
 		if (chip->fv_votable)
-			vote(chip->fv_votable, JEITA_VOTER, false, 0);
+			vote(chip->fv_votable, BATT_PROFILE_VOTER, false, 0);
 		goto update_time;
 	}
 
@@ -556,7 +526,17 @@ static int handle_jeita(struct step_chg_info *chip)
 	if (!chip->fv_votable)
 		goto update_time;
 
-	vote(chip->fv_votable, JEITA_VOTER, true, fv_uv);
+	rc = power_supply_get_property(chip->batt_psy,
+                       POWER_SUPPLY_PROP_VOLTAGE_MAX, &pval);
+       if (rc < 0) {
+               pr_err("Couldn't read property rc=%d\n",rc);
+               return rc;
+       }
+       if (pval.intval >= BASP_CHG_FLOAT_VOLTAGE_UV){
+               fv_uv = min(pval.intval,fv_uv);
+       }
+
+	vote(chip->fv_votable, BATT_PROFILE_VOTER, true, fv_uv);
 
 	pr_debug("%s = %d FCC = %duA FV = %duV\n",
 		chip->jeita_fcc_config->prop_name, pval.intval, fcc_ua, fv_uv);
@@ -646,7 +626,7 @@ static int step_chg_notifier_call(struct notifier_block *nb,
 	if (ev != PSY_EVENT_PROP_CHANGED)
 		return NOTIFY_OK;
 
-	if ((strcmp(psy->desc->name, "battery") == 0)) {
+	if ((strcmp(psy->desc->name, "battery") == 0)||(strcmp(psy->desc->name, "bk_battery") == 0)) {
 		__pm_stay_awake(chip->step_chg_ws);
 		schedule_delayed_work(&chip->status_change_work, 0);
 	}

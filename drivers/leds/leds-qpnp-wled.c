@@ -221,6 +221,9 @@
 #define QPNP_WLED_SC_DLY_MS		20
 #define QPNP_WLED_SOFT_START_DLY_US	10000
 
+#ifdef CONFIG_LCDKIT_DRIVER
+bool lcdkit_is_default_panel(void);
+#endif
 #define NUM_SUPPORTED_AVDD_VOLTAGES	6
 #define QPNP_WLED_DFLT_AVDD_MV		7600
 #define QPNP_WLED_AVDD_MIN_MV		5650
@@ -1066,6 +1069,11 @@ static void qpnp_wled_work(struct work_struct *work)
 	wled = container_of(work, struct qpnp_wled, work);
 
 	mutex_lock(&wled->lock);
+#ifdef CONFIG_LCDKIT_DRIVER
+	if(lcdkit_is_default_panel()){
+		level = 0;
+	}
+#endif
 	level = wled->cdev.brightness;
 
 	if (wled->brt_map_table) {

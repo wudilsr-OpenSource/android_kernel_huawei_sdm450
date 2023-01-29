@@ -19,9 +19,10 @@ qcom,ascent_3450mah {
 	qcom,battery-beta = <3435>;
 	qcom,battery-therm-kohm = <68>;
 	qcom,battery-type =
-		"Ascent_wConn_3450mAh_Fresh_averaged_MasterSlave_Feb7th2018";
+		"Ascent_wConn_3450mAh";
 	qcom,qg-batt-profile-ver = <100>;
-
+	qcom,jeita-soft-thresholds = <0x2aee 0xfb3>;
+	qcom,jeita-hard-thresholds = <0x3733 0xd93>;
 	qcom,jeita-fcc-ranges = <0   100  1725000
 				101  400  3450000
 				401  450  2760000>;
@@ -31,11 +32,6 @@ qcom,ascent_3450mah {
 	qcom,step-chg-ranges = <3600000  4200000  3450000
 				4201000  4300000  2760000
 				4301000  4350000  2070000>;
-
-	/* COOL = 5 DegC, WARM = 40 DegC */
-	qcom,jeita-soft-thresholds = <0x44bd 0x1fc4>;
-	/* COLD = 0 DegC, HOT = 45 DegC */
-	qcom,jeita-hard-thresholds = <0x4aa5 0x1bfb>;
 
 	qcom,fcc1-temp-lut {
 		qcom,lut-col-legend = <0 10 25 40 50>;

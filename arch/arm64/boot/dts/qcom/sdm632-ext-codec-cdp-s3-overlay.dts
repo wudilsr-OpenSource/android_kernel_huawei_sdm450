@@ -18,6 +18,7 @@
 
 / {
 	model = "Ext Codec CDP S3";
+	compatible = "qcom,cdp";
 	qcom,board-id = <1 3>;
 };
 
